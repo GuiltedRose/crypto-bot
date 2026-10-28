@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.env
+.venv/
+*keypair*.json
+*.sqlite*
+state/
+data/live_pool.jsonl
+/bin/orca-quote
+/orca_helper/target/

@@ -1,0 +1,246 @@
+{
+  "version": 1,
+  "policy": "Explicit reviewed native/protocol tokens and established meme candidates for spot trading at current capital. Mature memes require fresh risk screening. Sniping new launches remains gated at $5,000 verified equity. Venue eligibility and validated adapters are required separately.",
+  "assets": [
+    {
+      "symbol": "SOL",
+      "mint": "So11111111111111111111111111111111111111112",
+      "classification": "native",
+      "classification_reason": "Solana native asset",
+      "source": "https://solana.com/docs/core/tokens",
+      "approved_for_scanning": true,
+      "approved_for_live": true
+    },
+    {
+      "symbol": "DRIFT",
+      "mint": "DriFtupJYLTosbwoN8koMbEYSx54aFAVLddWsbksjwg7",
+      "classification": "non_meme",
+      "classification_reason": "exchange protocol governance",
+      "coingecko_id": "drift-protocol",
+      "source": "https://api.coingecko.com/api/v3/coins/list?include_platform=true",
+      "approved_for_scanning": true,
+      "approved_for_live": true
+    },
+    {
+      "symbol": "HNT",
+      "mint": "hntyVP6YFm1Hg25TN9WGLqM12b8TQmcknKrdu1oxWux",
+      "classification": "non_meme",
+      "classification_reason": "wireless infrastructure",
+      "coingecko_id": "helium",
+      "source": "https://api.coingecko.com/api/v3/coins/list?include_platform=true",
+      "approved_for_scanning": true,
+      "approved_for_live": true
+    },
+    {
+      "symbol": "JTO",
+      "mint": "jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL",
+      "classification": "non_meme",
+      "classification_reason": "staking protocol governance",
+      "coingecko_id": "jito-governance-token",
+      "source": "https://api.coingecko.com/api/v3/coins/list?include_platform=true",
+      "approved_for_scanning": true,
+      "approved_for_live": true
+    },
+    {
+      "symbol": "JITOSOL",
+      "mint": "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn",
+      "classification": "non_meme",
+      "classification_reason": "liquid staking",
+      "coingecko_id": "jito-staked-sol",
+      "source": "https://api.coingecko.com/api/v3/coins/list?include_platform=true",
+      "approved_for_scanning": true,
+      "approved_for_live": true
+    },
+    {
+      "symbol": "JUP",
+      "mint": "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
+      "classification": "non_meme",
+      "classification_reason": "DEX governance",
+      "coingecko_id": "jupiter-exchange-solana",
+      "source": "https://api.coingecko.com/api/v3/coins/list?include_platform=true",
+      "approved_for_scanning": true,
+      "approved_for_live": true
+    },
+    {
+      "symbol": "MNDE",
+      "mint": "MNDEFzGvMt87ueuHvVU9VcTqsAP5b3fTGPsHuuPA5ey",
+      "classification": "non_meme",
+      "classification_reason": "staking protocol governance",
+      "coingecko_id": "marinade",
+      "source": "https://api.coingecko.com/api/v3/coins/list?include_platform=true",
+      "approved_for_scanning": true,
+      "approved_for_live": true
+    },
+    {
+      "symbol": "ORCA",
+      "mint": "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE",
+      "classification": "non_meme",
+      "classification_reason": "DEX governance",
+      "coingecko_id": "orca",
+      "source": "https://api.coingecko.com/api/v3/coins/list?include_platform=true",
+      "approved_for_scanning": true,
+      "approved_for_live": true
+    },
+    {
+      "symbol": "PYTH",
+      "mint": "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3",
+      "classification": "non_meme",
+      "classification_reason": "oracle governance",
+      "coingecko_id": "pyth-network",
+      "source": "https://api.coingecko.com/api/v3/coins/list?include_platform=true",
+      "approved_for_scanning": true,
+      "approved_for_live": true
+    },
+    {
+      "symbol": "RAY",
+      "mint": "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R",
+      "classification": "non_meme",
+      "classification_reason": "DEX governance",
+      "coingecko_id": "raydium",
+      "source": "https://api.coingecko.com/api/v3/coins/list?include_platform=true",
+      "approved_for_scanning": true,
+      "approved_for_live": true
+    },
+    {
+      "symbol": "RENDER",
+      "mint": "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof",
+      "classification": "non_meme",
+      "classification_reason": "rendering network",
+      "coingecko_id": "render-token",
+      "source": "https://api.coingecko.com/api/v3/coins/list?include_platform=true",
+      "approved_for_scanning": true,
+      "approved_for_live": true
+    },
+    {
+      "symbol": "BONK",
+      "mint": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+      "classification": "mature_meme_candidate",
+      "classification_reason": "Established meme identity; requires fresh mature-token and pool risk screening",
+      "coingecko_id": "bonk",
+      "source": "https://api.coingecko.com/api/v3/coins/list?include_platform=true",
+      "approved_for_scanning": true,
+      "approved_for_live": true
+    },
+    {
+      "symbol": "WIF",
+      "mint": "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",
+      "classification": "mature_meme_candidate",
+      "classification_reason": "Established meme identity; requires fresh mature-token and pool risk screening",
+      "coingecko_id": "dogwifcoin",
+      "source": "https://api.coingecko.com/api/v3/coins/list?include_platform=true",
+      "approved_for_scanning": true,
+      "approved_for_live": true
+    },
+    {
+      "symbol": "POPCAT",
+      "mint": "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr",
+      "classification": "mature_meme_candidate",
+      "classification_reason": "Established meme identity; requires fresh mature-token and pool risk screening",
+      "coingecko_id": "popcat",
+      "source": "https://api.coingecko.com/api/v3/coins/list?include_platform=true",
+      "approved_for_scanning": true,
+      "approved_for_live": true
+    },
+    {
+      "symbol": "ATLAS",
+      "mint": "ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx",
+      "classification": "non_meme",
+      "classification_reason": "Star Atlas game utility token",
+      "coingecko_id": "star-atlas",
+      "source": "https://support.staratlas.com/hc/en-us/articles/47061439814547-What-are-the-Star-Atlas-tokens",
+      "approved_for_scanning": true,
+      "screening_required": true,
+      "approved_for_live": true
+    },
+    {
+      "symbol": "AFKHERO",
+      "mint": "9kwT8gUEMKQhnmc4mVb2iUAybfjzvVMM5LwffKFcpump",
+      "classification": "non_meme",
+      "classification_reason": "AFK Heroes game token, requested candidate; eligibility not assumed",
+      "source": "https://pump.fun/coin/9kwT8gUEMKQhnmc4mVb2iUAybfjzvVMM5LwffKFcpump",
+      "approved_for_scanning": true,
+      "screening_required": true,
+      "approved_for_live": true
+    },
+    {
+      "symbol": "BOME",
+      "mint": "ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82",
+      "classification": "mature_meme_candidate",
+      "classification_reason": "Established meme candidate for ordinary spot strategies; excludes automatic new-launch sniping",
+      "coingecko_id": "book-of-meme",
+      "source": "https://api.coingecko.com/api/v3/coins/list?include_platform=true",
+      "approved_for_scanning": true,
+      "approved_for_live": true
+    },
+    {
+      "symbol": "MEW",
+      "mint": "MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREQUzScPP5",
+      "classification": "mature_meme_candidate",
+      "classification_reason": "Established meme candidate for ordinary spot strategies; excludes automatic new-launch sniping",
+      "coingecko_id": "cat-in-a-dogs-world",
+      "source": "https://api.coingecko.com/api/v3/coins/list?include_platform=true",
+      "approved_for_scanning": true,
+      "approved_for_live": true
+    },
+    {
+      "symbol": "PENGU",
+      "mint": "2zMMhcVQEXDtdE6vsFS7S7D5oUodfJHE8vd1gnBouauv",
+      "classification": "mature_meme_candidate",
+      "classification_reason": "Established meme candidate for ordinary spot strategies; excludes automatic new-launch sniping",
+      "coingecko_id": "pudgy-penguins",
+      "source": "https://api.coingecko.com/api/v3/coins/list?include_platform=true",
+      "approved_for_scanning": true,
+      "approved_for_live": true
+    },
+    {
+      "symbol": "FARTCOIN",
+      "mint": "9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump",
+      "classification": "mature_meme_candidate",
+      "classification_reason": "Established meme candidate for ordinary spot strategies; excludes automatic new-launch sniping",
+      "coingecko_id": "fartcoin",
+      "source": "https://api.coingecko.com/api/v3/coins/list?include_platform=true",
+      "approved_for_scanning": true,
+      "approved_for_live": true
+    },
+    {
+      "symbol": "GIGA",
+      "mint": "63LfDmNb3MQ8mw9MtZ2To9bEA2M71kZUUGq5tiJxcqj9",
+      "classification": "mature_meme_candidate",
+      "classification_reason": "Established meme candidate for ordinary spot strategies; excludes automatic new-launch sniping",
+      "coingecko_id": "gigachad-2",
+      "source": "https://api.coingecko.com/api/v3/coins/list?include_platform=true",
+      "approved_for_scanning": true,
+      "approved_for_live": true
+    },
+    {
+      "symbol": "PNUT",
+      "mint": "2qEHjDLDLbuBgRYvsxhc5D6uDWAivNFZGan56P1tpump",
+      "classification": "mature_meme_candidate",
+      "classification_reason": "Established meme candidate for ordinary spot strategies; excludes automatic new-launch sniping",
+      "coingecko_id": "peanut-the-squirrel",
+      "source": "https://api.coingecko.com/api/v3/coins/list?include_platform=true",
+      "approved_for_scanning": true,
+      "approved_for_live": true
+    },
+    {
+      "symbol": "MOODENG",
+      "mint": "ED5nyyWEzpPPiWimP8vYm7sD7TD3LAt3Q3gRTWHzPJBY",
+      "classification": "mature_meme_candidate",
+      "classification_reason": "Established meme candidate for ordinary spot strategies; excludes automatic new-launch sniping",
+      "coingecko_id": "moo-deng",
+      "source": "https://api.coingecko.com/api/v3/coins/list?include_platform=true",
+      "approved_for_scanning": true,
+      "approved_for_live": true
+    },
+    {
+      "symbol": "TRUMP",
+      "mint": "6p6xgHyF7AeE6TZkSmFsko444wqoP15icUSqi2jfGiPN",
+      "classification": "mature_meme_candidate",
+      "classification_reason": "Established meme candidate for ordinary spot strategies; excludes automatic new-launch sniping",
+      "coingecko_id": "official-trump",
+      "source": "https://api.coingecko.com/api/v3/coins/list?include_platform=true",
+      "approved_for_scanning": true,
+      "approved_for_live": true
+    }
+  ]
+}

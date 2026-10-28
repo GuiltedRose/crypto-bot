@@ -3,6 +3,7 @@ import argparse
 import csv
 import json
 import math
+import time
 from dataclasses import dataclass
 
 SOL_MINT = "So11111111111111111111111111111111111111112"
@@ -13,10 +14,11 @@ class Universe:
     # Mint identities, not token names/symbols. Additional tokens need review.
     established_mints: frozenset = frozenset({SOL_MINT})
     meme_mints: frozenset = frozenset()
-    meme_min_equity_usd: float = 5000.0
+    mature_meme_mints: frozenset = frozenset()
+    mature_meme_valid_until: float = 0.0
     max_active_meme_coins: int = 2
 
-    def eligible(self, mint, equity, active_mints=()):
+    def eligible(self, mint, equity, active_mints=(), now=None):
         """Check new entries; active_mints must include pending buy orders.
 
         Existing token top-ups do not add another coin. Callers must serialize
@@ -24,10 +26,12 @@ class Universe:
         """
         if not math.isfinite(equity) or equity <= 0:
             return False, "invalid equity"
-        if mint in self.meme_mints:
-            if equity < self.meme_min_equity_usd:
-                return False, "meme coins blocked below $5,000 equity"
-            active_memes = set(active_mints) & self.meme_mints
+        all_memes=self.meme_mints|self.mature_meme_mints
+        if mint in all_memes:
+            now=time.time() if now is None else now
+            if mint not in self.mature_meme_mints or not math.isfinite(now) or not math.isfinite(self.mature_meme_valid_until) or now>=self.mature_meme_valid_until:
+                return False, "meme token requires fresh mature-token risk screening"
+            active_memes = set(active_mints) & all_memes
             if mint not in active_memes and len(active_memes) >= self.max_active_meme_coins:
                 return False, "maximum two active meme coins"
             return True, "reviewed meme token eligible"
@@ -38,6 +42,7 @@ class Universe:
 
 @dataclass(frozen=True)
 class Risk:
+    min_target_cost_multiple: float = 1.5
     quarter_kelly: float = 0.25
     position_cap: float = 0.05
     reserve_usd: float = 1.0
@@ -46,6 +51,10 @@ class Risk:
     fee_per_side: float = 0.0025
     slippage_per_side: float = 0.005
     fixed_round_trip_usd: float = 0.01
+
+    def __post_init__(self):
+        if not math.isfinite(self.min_target_cost_multiple) or self.min_target_cost_multiple<=1:
+            raise ValueError('Target must exceed estimated round-trip costs')
 
 
 def size(equity, history, risk=Risk()):
