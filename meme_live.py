@@ -107,10 +107,11 @@ def receipt_fill(transaction,user,mint,base_account,quote_account):
 
 
 class MemeLiveEngine:
-    def __init__(self,rpc,user,store,rules,orders=None,signer=None,adapter_factory=MemeAdapter,risk_assessor=None):
+    def __init__(self,rpc,user,store,rules,orders=None,signer=None,adapter_factory=MemeAdapter,risk_assessor=None,fixed_profile=None):
         self.rpc,self.user,self.store,self.rules=rpc,str(user),store,rules
         self.orders,self.signer,self.adapter_factory=orders,signer,adapter_factory
         self.risk_assessor=risk_assessor
+        self.fixed_profile=fixed_profile
         if orders and store.state['pending'] is None and orders.unresolved():
             raise ValueError('Unbound unresolved orders require manual reconciliation')
         if (orders is None)!=(signer is None): raise ValueError('Signer and order journal must be paired')
@@ -118,11 +119,13 @@ class MemeLiveEngine:
     @property
     def execute(self): return self.signer is not None
 
-    def mark(self,equity):
-        equity=positive(equity);s=self.store.state
-        s['peak_equity']=max(s['peak_equity'] or equity,equity)
-        if equity<=s['peak_equity']*(1-self.rules.drawdown_halt): s['halted']=True
-        self.store.save('portfolio_mark',{'equity_usd':equity,'halted':s['halted']})
+    def mark(self,equity,open_pnl_usd=0.):
+        from meme_bot_risk import mark_bot_risk
+        has_orders=bool(self.orders and self.orders.db.execute('SELECT 1 FROM orders LIMIT 1').fetchone())
+        return mark_bot_risk(self.store,equity,self.rules.drawdown_halt,open_pnl_usd,has_orders,
+            self.rules.drawdown_promotion_bankroll_usd,self.rules.promoted_drawdown_halt,
+            total_bankroll=equity if self.rules.drawdown_bankroll_basis=='total_for_demotion' else None,
+            total_complete=getattr(self,'bankroll_valuation',{}).get('complete',True))
 
     def recover(self):
         s=self.store.state;p=s['pending']
@@ -171,18 +174,20 @@ class MemeLiveEngine:
         if s['pending']: return self.recover()
         position=s['position']
         if position and snapshot['mint']!=position['mint']: return {'status':'open_position_has_priority'}
-        self.mark(equity)
+        if position is None: self.mark(equity)
         if not 0<=now-snapshot['observed_at']<=30: return {'status':'stale_market_observation'}
         if snapshot.get('execution',{}).get('model_only'): raise ValueError('Paper execution assumptions cannot authorize live orders')
         side='sell' if position else 'buy'
         if side=='buy':
-            if s['halted']: return {'status':'drawdown_halted'}
+            if s['halted']: return {'status':'drawdown_halted','risk':s.get('strategy_risk',{})}
+            if s.get('strategy_risk',{}).get('promotion_valuation_pending'): return {'status':'bankroll_valuation_incomplete','reason':'Cannot confirm total-bankroll promotion/demotion; new entries paused','risk':s['strategy_risk']}
             entry_rules=self.rules
-            profile_name=None
+            profile_name=self.fixed_profile
             if self.rules.entry_profile_mode=='adaptive':
                 from meme_profiles import assess_profiles,profiles
                 selection=assess_profiles(snapshot,now,self.rules)
                 self.last_profile_selection=selection
+                self.store.state['last_entry_regime']={'profile':selection['selected_profile'],'observed_at':now} if selection['selected_profile'] else None
                 self.store.save('entry_profile_selection',selection)
                 profile_name=selection['selected_profile']
                 if profile_name is None:
@@ -198,7 +203,10 @@ class MemeLiveEngine:
             reasons=entry_screen(snapshot,now,entry_rules)
             if reasons: return {'status':'entry_rejected','reasons':reasons,'scorecard':assessment}
             from trend_pullback import assess_trend_pullback
-            signal=assess_trend_pullback(snapshot,now,entry_rules)
+            if entry_rules.entry_style=='volume_candles':
+                from volume_candles import assess_volume_candles
+                signal=assess_volume_candles(snapshot,now,entry_rules)
+            else: signal=assess_trend_pullback(snapshot,now,entry_rules)
             if signal['action']!='buy': return {'status':'watch','signal':signal,'scorecard':assessment}
             bar=int(snapshot['candle_history']['candles'][-1]['timestamp'])
             used=self.store.db.execute('SELECT bar FROM bars WHERE mint=? AND pool=?',(snapshot['mint'],snapshot['pool'])).fetchone()
@@ -210,19 +218,21 @@ class MemeLiveEngine:
             if market['base_balance']<position['units']: return {'status':'wallet_inventory_changed_manual_reconciliation_required'}
             units=position['units'];out=adapter.output('sell',units,market)
             net=(out*(1-self.rules.slippage_per_side))/1e9*sol_price-.00002*sol_price-position['cost_usd']
-            reason=('portfolio drawdown' if s['halted'] else 'loss trigger' if net<=-self.rules.max_loss_usd else
+            self.mark(equity,net)
+            reason=('bot strategy drawdown' if s['halted'] else 'loss trigger' if net<=-self.rules.max_loss_usd else
                     'profit target' if net>=self.rules.take_profit_usd else 'time limit' if now-position['opened_at']>=self.rules.max_holding_seconds else None)
             if reason is None: return {'status':'holding','estimated_net_pnl_usd':net}
         else:
             # Preserve the explicit dollar reserve and native exit reserve.
             available=(market['native_lamports']+market.get('quote_balance',0)-int(self.rules.native_fee_reserve_sol*1e9)-5040000)/1e9*sol_price-self.rules.reserve_usd
-            budget=min(self.rules.max_position_usd,available,snapshot['liquidity_usd']*self.rules.max_liquidity_allocation_fraction)
+            budget=min(self.rules.max_position_usd,available)
+            if self.rules.entry_style!='volume_candles': budget=min(budget,snapshot['liquidity_usd']*self.rules.max_liquidity_allocation_fraction)
             if budget<=0: return {'status':'insufficient_spendable_SOL_after_reserves'}
-            units=int(budget/sol_price*1e9);reason='trend pullback'
+            units=int(budget/sol_price*1e9);reason='volume and candle minimums' if self.rules.entry_style=='volume_candles' else 'trend pullback'
             if units<=0: return {'status':'position_rounds_to_zero'}
         risk_report=None
         if side=='buy':
-            if self.risk_assessor:
+            if self.risk_assessor and self.rules.entry_style!='volume_candles':
                 risk=self.risk_assessor.assess(adapter,market)
                 risk_report=risk
                 self.store.save('onchain_entry_risk',risk)
@@ -246,8 +256,10 @@ class MemeLiveEngine:
             setup=(simulated['rent_lamports']-simulated.get('recoverable_rent_lamports',0))/1e9*sol_price
             round_trip=(2*simulated['fee_lamports']/1e9*sol_price+units/1e9*sol_price*2*(market['fee_bps']/10000+self.rules.slippage_per_side))
             if round_trip+setup>=self.rules.max_loss_usd: return {'status':'estimated_costs_exceed_loss_budget'}
+        from meme_learning import decision_context
+        context_record=decision_context(snapshot,self.rules,assessment if side=='buy' else None)
         intent=dict(id=str(uuid.uuid4()),side=side,mint=snapshot['mint'],pool=snapshot['pool'],kind=snapshot['market_kind'],
-            onchain_risk=risk_report,entry_profile=profile_name,input_units=units,minimum=context['min_output'],sol_price_usd=sol_price,bar=bar,reason=reason,
+            entry_context=context_record,onchain_risk=risk_report,entry_profile=profile_name,input_units=units,minimum=context['min_output'],sol_price_usd=sol_price,bar=bar,reason=reason,
             base_account=str(market['base_user']),quote_account=str(market['quote_user']),simulation=simulated,
             message_hash=context['message_hash'],last_valid_block_height=context['last_valid_block_height'])
         if not self.execute:

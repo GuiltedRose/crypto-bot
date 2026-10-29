@@ -43,22 +43,26 @@ class DipRules:
     max_position_usd: float = 0
     intended_risk_fraction: float = .0025
     drawdown_halt: float = .05
+    drawdown_promotion_bankroll_usd: float = 0
+    promoted_drawdown_halt: float = .30
+    drawdown_bankroll_basis: str = 'bot'
     fee_per_side: float = .003
     slippage_per_side: float = .005
 
     def __post_init__(self):
+        if self.drawdown_bankroll_basis not in ('bot','total_for_demotion'): raise ValueError('Unknown bankroll promotion basis')
         if self.evidence_mode not in ('strict','market_only'):
             raise ValueError('Unknown paper evidence mode')
-        if type(self.trend_min_bars) is not int or not 3<=self.trend_min_bars<=12:
+        if type(self.trend_min_bars) is not int or not (2 if self.entry_style=='volume_candles' else 3)<=self.trend_min_bars<=12:
             raise ValueError('Trend history minimum must be 3 through 12 completed candles')
-        if self.entry_profile_mode not in ('fixed','adaptive') or self.entry_profile_mode=='adaptive' and self.entry_style!='trend_pullback':
+        if self.entry_profile_mode not in ('fixed','adaptive') or self.entry_profile_mode=='adaptive' and self.entry_style not in ('trend_pullback','volume_candles'):
             raise ValueError('Adaptive entry profiles require the trend/pullback strategy')
-        if self.entry_style not in ('ath_dip','trend_pullback'):
+        if self.entry_style not in ('ath_dip','trend_pullback','volume_candles'):
             raise ValueError('Unknown paper entry style')
         if not 0 < self.trend_pullback_min_fraction < self.trend_pullback_max_fraction < 1 or self.max_holding_seconds<=0 or not 0<self.max_liquidity_allocation_fraction<1:
             raise ValueError('Invalid trend entry settings')
         for key,value in asdict(self).items():
-            if key not in ('evidence_mode','entry_style','entry_profile_mode'):
+            if key not in ('evidence_mode','entry_style','entry_profile_mode','drawdown_bankroll_basis'):
                 number(value, 0)
         for value in (self.min_dip_fraction, self.max_dip_fraction, self.stop_fraction,
                       self.allocation_cap, self.intended_risk_fraction, self.drawdown_halt):
@@ -66,6 +70,8 @@ class DipRules:
                 raise ValueError('Invalid fractional rule')
         if not 0 < self.min_rising_close_fraction <= 1 or not 0 < self.max_candle_range_fraction < 1 or not 0 <= self.max_wicky_bar_fraction <= 1:
             raise ValueError('Invalid candle-quality settings')
+        if not 0<self.promoted_drawdown_halt<1 or self.drawdown_promotion_bankroll_usd>0 and self.promoted_drawdown_halt<self.drawdown_halt:
+            raise ValueError('Invalid promoted drawdown schedule')
         if self.min_dip_fraction >= self.max_dip_fraction:
             raise ValueError('Pullback zone must have increasing bounds')
         if not 0 <= self.rebound_fraction < 1:
@@ -81,6 +87,9 @@ def reference_values(snapshot):
 
 
 def entry_screen(snapshot, now, rules):
+    if rules.entry_style=='volume_candles':
+        from volume_candles import assess_volume_candles
+        return assess_volume_candles(snapshot,now,rules)['reasons']
     from candle_quality import CandleQualityPolicy
     if rules.entry_style=='trend_pullback':
         from trend_pullback import assess_trend_pullback
@@ -145,6 +154,10 @@ class PaperDipTrader:
         self.peak = starting_usd + (self.native_sol or 0)*(self.sol_price_usd or 0)
         if self.peak < .01:
             raise ValueError('Starting total equity must be at least one cent')
+        self.strategy_capital_usd=self.peak
+        self.strategy_peak_pnl_usd=0.
+        self.strategy_realized_pnl_usd=0.
+        self.strategy_risk={}
         self.position = None
         self.armed = {}
         self.last_seen = {}
@@ -155,6 +168,20 @@ class PaperDipTrader:
 
     def equity(self,token_value=0):
         return self.cash+token_value+((self.native_sol or 0)+sum(self.account_rent.values()))*(self.sol_price_usd or 0)
+
+    def mark_risk(self,equity,open_pnl=0.):
+        if self.rules.entry_style=='volume_candles':
+            pnl=self.strategy_realized_pnl_usd+open_pnl
+            self.strategy_peak_pnl_usd=max(self.strategy_peak_pnl_usd,pnl)
+            from drawdown_schedule import drawdown_state
+            self.strategy_risk=drawdown_state(self.strategy_capital_usd,pnl,self.strategy_peak_pnl_usd,self.rules.drawdown_halt,
+                self.rules.drawdown_promotion_bankroll_usd,self.rules.promoted_drawdown_halt,
+                total_bankroll=equity if self.rules.drawdown_bankroll_basis=='total_for_demotion' else None,
+                previous_tier=self.strategy_risk.get('tier','base'))
+            self.halted=self.halted or (self.strategy_risk['drawdown_usd']>0 and self.strategy_risk['drawdown_usd']>=self.strategy_risk['limit_usd'])
+        else:
+            self.peak=max(self.peak,equity)
+            self.halted=self.halted or equity<=self.peak*(1-self.rules.drawdown_halt)
 
     def reclaim_rent(self):
         if self.native_sol is None:
@@ -217,13 +244,13 @@ class PaperDipTrader:
             if position.get('quote_mint',USDC_MINT)!=quote_mint:
                 return {'action':'hold','reason':'paper exit quote asset changed; reconcile route'}
             equity = self.equity(position['quantity']*price)
-            self.peak = max(self.peak, equity)
-            self.halted = self.halted or equity <= self.peak * (1-r.drawdown_halt)
-            time_exit=position.get('entry_style')=='trend_pullback' and now-position['opened_at']>=r.max_holding_seconds
+            if r.entry_style!='volume_candles': self.mark_risk(equity)
+            time_exit=position.get('entry_style') in ('trend_pullback','volume_candles') and now-position['opened_at']>=r.max_holding_seconds
             proceeds=max(0,position['quantity']*price*(1-r.slippage_per_side)*(1-trade_fee)-position['exit_fixed_cost'])
             projected_pnl=proceeds-position['cash_spent']
             if self.native_sol is not None:
                 projected_pnl-=position['entry_native_cost_usd']+(network+(0 if position.get('rent_is_refundable') else exit_rent))*self.sol_price_usd
+            if r.entry_style=='volume_candles': self.mark_risk(equity,projected_pnl)
             loss_limit=position.get('max_loss_usd',0)
             profit_target=position.get('take_profit_usd',0)
             stop_hit=projected_pnl<=-loss_limit if loss_limit>0 else price<=position['stop']
@@ -245,7 +272,8 @@ class PaperDipTrader:
                     pnl -= position['entry_native_cost_usd']+(network+(0 if position.get('rent_is_refundable') else exit_rent))*self.sol_price_usd
                 self.position = None
                 self.armed.pop(key, None)
-                self.halted = self.halted or self.equity() <= self.peak*(1-r.drawdown_halt)
+                self.strategy_realized_pnl_usd+=pnl
+                self.mark_risk(self.equity())
                 return {'action': 'paper_sell', 'mint': mint, 'pnl_usd': pnl, 'cash_usd': self.cash,'native_sol':self.native_sol,
                         'reason': 'drawdown halt' if self.halted else 'stop' if stop_hit else 'time limit' if time_exit and not target_hit else 'target'}
             return {'action': 'hold', 'reason': 'manage paper position'}
@@ -264,15 +292,19 @@ class PaperDipTrader:
             # A recovery must be observed again after an evidence outage.
             self.armed.pop(key, None)
             return {'action': 'reject', 'reasons': reasons}
-        if r.entry_style=='trend_pullback':
-            from trend_pullback import assess_trend_pullback
-            setup=assess_trend_pullback(snapshot,now,r)
+        if r.entry_style in ('trend_pullback','volume_candles'):
+            if r.entry_style=='volume_candles':
+                from volume_candles import assess_volume_candles
+                setup=assess_volume_candles(snapshot,now,r)
+            else:
+                from trend_pullback import assess_trend_pullback
+                setup=assess_trend_pullback(snapshot,now,r)
             if setup['action']!='buy':
                 return setup
             signal_bar=snapshot['candle_history']['candles'][-1]['timestamp']
             if self.last_entry_bars.get(key)==signal_bar:
                 return {'action':'watch','reason':'already entered on this completed candle'}
-            ath,reference_price=setup['metrics']['peak_price'],price
+            ath,reference_price=setup['metrics'].get('peak_price',price),price
         else:
             ath,reference_price = reference_values(snapshot)
             armed = self.armed.get(key)
@@ -298,9 +330,8 @@ class PaperDipTrader:
                     return {'action': 'watch', 'reason': 'awaiting rebound from observed dip low'}
         fixed = snapshot['fixed_cost_per_side_usd']
         equity = self.equity()
-        self.peak = max(self.peak, equity)
-        if equity <= self.peak*(1-r.drawdown_halt):
-            self.halted = True
+        self.mark_risk(equity)
+        if self.halted:
             return {'action': 'reject', 'reason': 'paper drawdown halt'}
         if self.native_sol is not None:
             if execution.get('buy_route_available') is not True:
@@ -348,7 +379,7 @@ class PaperDipTrader:
         if r.max_loss_usd>0:
             self.position['stop']=max(0,(budget+exit_costs-r.max_loss_usd)/coefficient)
         self.armed.pop(key, None)
-        if r.entry_style=='trend_pullback':
+        if r.entry_style in ('trend_pullback','volume_candles'):
             self.last_entry_bars[key]=signal_bar
         return {'action': 'paper_buy', 'mint': mint, 'budget_usd': budget,
                 'pullback_fraction': 1-reference_price/ath,

@@ -169,12 +169,12 @@ class EngineTests(unittest.TestCase):
         self.assertIsNone(self.store.state['position'])
         self.assertIsNone(self.store.state['pending'])
     def test_halt_is_persistent_and_exits_take_priority_over_new_entries(self):
-        self.engine.mark(6.5);self.engine.mark(6.1)
+        self.engine.mark(6.5);self.store.state['realized_pnl_usd']=-.4;self.engine.mark(6.1)
         self.assertEqual(self.engine.prepare(self.row,100,6.1,1200)['status'],'drawdown_halted')
         self.store.state['position']={'mint':'Mint','pool':'Pool','kind':'bonding_curve','units':1000,'cost_usd':1.78,'opened_at':1200}
         result=self.engine.prepare(self.row,100,6.1,1200)
         self.assertEqual(result['status'],'unsigned_simulation_passed')
-        self.assertEqual(result['intent']['reason'],'portfolio drawdown')
+        self.assertEqual(result['intent']['reason'],'bot strategy drawdown')
         self.store.save('test',{})
         self.store.close();self.store=MemeLiveStore(self.temp.name,'user',self.rules)
         self.assertTrue(self.store.state['halted'])
@@ -185,7 +185,7 @@ class EngineTests(unittest.TestCase):
         self.rpc['output']=28200000
         self.assertEqual(self.engine.prepare(self.row,100,6.5,1200)['intent']['reason'],'profit target')
         self.rpc['output']=15000000
-        self.assertEqual(self.engine.prepare(self.row,100,6.5,1200)['intent']['reason'],'loss trigger')
+        self.assertEqual(self.engine.prepare(self.row,100,6.5,1200)['intent']['reason'],'bot strategy drawdown')
     def test_modeled_paper_execution_flags_cannot_enter_live(self):
         self.row['execution']={'model_only':True}
         with self.assertRaisesRegex(ValueError,'Paper'): self.engine.prepare(self.row,100,6.5,1200)

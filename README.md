@@ -1,5 +1,14 @@
 # Solana spot trading bot
 
+Adaptive Current/Moderate/Aggressive response profiles share one entry policy:
+at least **$5,000 hourly buy volume** and **3 completed
+one-minute candles**, with **$1.78 maximum input**, **$1 net TP** and **$0.20 net
+SL triggers** unchanged. The live drawdown failsafe now tracks bot P&L only,
+not manual wallet activity. Execution validation and loss controls remain.
+See [current policy and relaunch instructions](MEME_TRADER.md#current-minimal-entry-policy-supersedes-profiledip-notes-below).
+The previous trend/profile experiments below are historical context.
+
+
 Current meme selection supports per-coin entry profiles: assess Current,
 Moderate and Aggressive, then choose the narrowest qualifying setup while
 keeping dollar risk and slippage fixed. `run_paper_compare.py` compares all

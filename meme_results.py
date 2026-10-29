@@ -35,7 +35,14 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--state-dir',type=Path,default=Path('state/meme_live'))
     args=parser.parse_args()
-    print(json.dumps(results(args.state_dir/'meme_live.sqlite'),indent=2))
+    report=results(args.state_dir/'meme_live.sqlite')
+    manual_path=Path('state/manual_research/summary.json')
+    if manual_path.exists():
+        try:
+            manual=json.loads(manual_path.read_text())
+            report['manual_research']={k:manual.get(k) for k in ('username','transactions_archived','known_pump_trades_nonbot','known_bot_orders_archived','known_pump_trades_bot','research_trades_total','pending_receipts','requested_period_traversed','profit_labels_verified')}
+        except (OSError,ValueError,TypeError): report['manual_research']={'status':'unavailable'}
+    print(json.dumps(report,indent=2))
 
 
 if __name__=='__main__': main()

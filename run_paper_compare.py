@@ -91,7 +91,7 @@ def display(report):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--state-dir',type=Path,default=Path('state/paper_comparison'))
-    parser.add_argument('--rules',type=Path,default=Path('meme_live_rules.json'))
+    parser.add_argument('--rules',type=Path,help='Base strategy for a new tolerance experiment; existing experiments default to their frozen manifest')
     parser.add_argument('--profiles',type=Path,default=Path('paper_profiles.json'))
     parser.add_argument('--bankroll-usd',type=float,help='NEW experiment: this total virtual USD value, entirely SOL; not a real wallet balance')
     parser.add_argument('--balance',type=float,help='Alternative starting virtual USDC; combine with native SOL/valuation for actual inventory proportions')
@@ -136,10 +136,14 @@ def main():
         native=args.bankroll_usd/number(price,1e-15);balance=0
     if not exists and (balance is None or native is None or price is None): parser.error('New experiment requires --bankroll-usd or explicit --balance/--native-sol/--sol-price')
     if (native is None)!=(price is None): parser.error('--native-sol and --sol-price must be supplied together')
-    variants=None if args.status and exists else profiles(DipRules(**json.loads(args.rules.read_text())),args.profiles)
-    if variants is not None and not args.no_selector:
-        base=DipRules(**json.loads(args.rules.read_text()))
-        variants['adaptive']=replace(base,entry_profile_mode='adaptive')
+    if exists and args.rules is None:
+        stored=json.loads((args.state_dir/'manifest.json').read_text())
+        variants={name:DipRules(**value) for name,value in stored['profiles'].items()}
+    else:
+        base=DipRules(**json.loads((args.rules or Path('meme_live_rules.json')).read_text()))
+        if base.entry_style!='trend_pullback': parser.error('Tolerance comparisons require a trend/pullback policy. Use run_paper.py with the volume/candles rules for the current single policy.')
+        variants=profiles(base,args.profiles)
+        if not args.no_selector: variants['adaptive']=replace(base,entry_profile_mode='adaptive')
     comparison=Comparison(args.state_dir,variants,balance,native,price)
     try:
         if args.status:

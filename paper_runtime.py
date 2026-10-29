@@ -16,7 +16,8 @@ SCHEMA = 1
 def encode_state(trader):
     return {'schema': SCHEMA, 'rules': asdict(trader.rules), 'cash': trader.cash,
             'native_sol': trader.native_sol, 'sol_price_usd': trader.sol_price_usd,
-            'peak': trader.peak, 'position': trader.position, 'halted': trader.halted,
+            'strategy_capital_usd':trader.strategy_capital_usd,'strategy_peak_pnl_usd':trader.strategy_peak_pnl_usd,
+            'strategy_realized_pnl_usd':trader.strategy_realized_pnl_usd,'strategy_risk':trader.strategy_risk,'peak': trader.peak, 'position': trader.position, 'halted': trader.halted,
             'last_timestamp': trader.last_timestamp,
             'account_rent':[[list(key),value] for key,value in trader.account_rent.items()],
             'last_entry_bars':[[list(key),value] for key,value in trader.last_entry_bars.items()],
@@ -31,6 +32,9 @@ def decode_state(state):
                             state['native_sol'], state['sol_price_usd'])
     for field in ('cash', 'peak', 'position', 'halted', 'last_timestamp'):
         setattr(trader, field, state[field])
+    for field in ('strategy_capital_usd','strategy_peak_pnl_usd','strategy_realized_pnl_usd'):
+        if field in state: setattr(trader,field,state[field])
+    trader.strategy_risk=state.get('strategy_risk',{})
     trader.account_rent={tuple(key):value for key,value in state.get('account_rent',[])}
     trader.last_entry_bars={tuple(key):value for key,value in state.get('last_entry_bars',[])}
     trader.armed = {tuple(key): value for key, value in state['armed']}
@@ -101,6 +105,21 @@ class PaperSession:
         previous = self.run_id
         self.run_id, self.initial, self.trader = run_id, initial, replacement
         return previous
+
+    def adopt_entry_mode(self,rules):
+        old=asdict(self.trader.rules);new=asdict(rules)
+        changed={key for key in old if old[key]!=new[key]}
+        if old['entry_style']!='volume_candles' or new['entry_style']!='volume_candles' or changed-{'entry_profile_mode','drawdown_halt','drawdown_promotion_bankroll_usd','promoted_drawdown_halt','drawdown_bankroll_basis'}:
+            raise ValueError('Paper adoption may change only profile mode and the explicit drawdown threshold; other admission and financial rules must match')
+        candidate=decode_state(encode_state(self.trader));candidate.rules=rules
+        with self.db:
+            self.db.execute('INSERT INTO paper_events(run_id,fingerprint,observed,event,snapshot) VALUES(?,?,?,?,?)',
+                (self.run_id,str(uuid.uuid4()),time.time(),json.dumps({'action':'paper_policy_adopted','old_mode':old['entry_profile_mode'],
+                 'new_mode':new['entry_profile_mode'],'old_drawdown_halt':old['drawdown_halt'],
+                 'new_drawdown_halt':new['drawdown_halt'],'old_promotion_bankroll_usd':old['drawdown_promotion_bankroll_usd'],
+                 'new_promotion_bankroll_usd':new['drawdown_promotion_bankroll_usd'],'promoted_drawdown_halt':new['promoted_drawdown_halt'],'drawdown_bankroll_basis':new['drawdown_bankroll_basis'],'halt_preserved':candidate.halted,'pnl_usd':0,'data_kind':'paper_accounting'}),'{}'))
+            self.db.execute('UPDATE paper_runs SET checkpoint=? WHERE id=?',(json.dumps(encode_state(candidate),allow_nan=False),self.run_id))
+        self.trader=candidate
 
     def process(self, snapshot):
         raw = json.dumps(snapshot, sort_keys=True, allow_nan=False)
@@ -173,7 +192,8 @@ class PaperSession:
                 'position': position, 'drawdown_halted': self.trader.halted,
                 'rules': asdict(self.trader.rules), 'event_counts': counts,
                 'data_kinds': sorted(data_kinds),
-                'safety_evidence_mode':self.trader.rules.evidence_mode,
+                'safety_evidence_mode':self.trader.rules.evidence_mode,'drawdown_scope':'bot_positions' if self.trader.rules.entry_style=='volume_candles' else 'virtual_wallet',
+                'strategy_realized_pnl_usd':self.trader.strategy_realized_pnl_usd,'strategy_risk':self.trader.strategy_risk,
                 'live_qualified':False,
                 'latest_execution_assumptions':assumptions,
                 'execution_model': 'native_fee_ledger' if self.trader.native_sol is not None else 'assumed_USD_costs',

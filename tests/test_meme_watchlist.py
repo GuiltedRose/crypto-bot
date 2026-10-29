@@ -81,3 +81,11 @@ class WatchlistTests(unittest.TestCase):
         self.assertEqual(observed[0],self.mint)
         self.assertEqual(len(set(observed)),10)
         self.assertGreater(result['watched_candidates'],0)
+
+    def test_minimal_policy_drops_expired_volume_opportunity(self):
+        from dataclasses import replace
+        rules=replace(self.rules,entry_style='volume_candles')
+        self.assertTrue(self.watch.observe(self.row,self.result,rules)['retained'])
+        self.row['buy_volume_usd']=4999
+        self.assertFalse(self.watch.observe(self.row,{'status':'entry_rejected'},rules)['retained'])
+        self.assertEqual(self.watch.count(),0)

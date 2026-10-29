@@ -33,15 +33,15 @@ def feed_once(session, path):
     return {'status': 'waiting_for_complete_record' if pending else 'ok', 'processed': count}
 
 
-def candidate_queue(session,position,mints,ranked,discovered):
+def candidate_queue(session,position,mints,ranked,discovered,limit=6):
     held=[position['mint']] if position else []
-    pinned=list(dict.fromkeys(held+list(mints)+ranked[:2]))[:6]
+    pinned=list(dict.fromkeys(held+list(mints)+ranked[:2]))[:limit]
     remaining=[mint for mint in dict.fromkeys(ranked+discovered) if mint not in pinned]
-    if not remaining or len(pinned)>=6:
+    if not remaining or len(pinned)>=limit:
         return pinned
     row=session.db.execute("SELECT cursor FROM paper_source_cursors WHERE run_id=? AND source='candidates'",(session.run_id,)).fetchone()
     cursor=(row[0] if row else 0)%len(remaining)
-    count=min(6-len(pinned),len(remaining))
+    count=min(limit-len(pinned),len(remaining))
     rotated=[remaining[(cursor+i)%len(remaining)] for i in range(count)]
     with session.db:
         session.db.execute("INSERT OR REPLACE INTO paper_source_cursors VALUES(?,'candidates',?)",(session.run_id,(cursor+count)%len(remaining)))
@@ -53,6 +53,10 @@ def markets_once(session, sources, mints, discover=False, narrative_store=None, 
     position = session.trader.position
     processed = 0
     watch_report = None
+    retained=None
+    if session.trader.rules.entry_style=='volume_candles':
+        from meme_watchlist import CandidateWatchlist
+        retained=CandidateWatchlist(session.db)
     queue = [position['mint']] if position else []
 
     def observe(mint, pool=None):
@@ -65,11 +69,17 @@ def markets_once(session, sources, mints, discover=False, narrative_store=None, 
                                               'hot_tokens':[r for r in context.get('hot_tokens',[]) if r['mint']==mint],
                                               'hot_token_source':context.get('hot_token_source',{}),'wallet_signals':[group for group in context.get('signals',[]) if group['mint']==mint],
                                               'callouts':[row for row in context.get('callouts',[]) if row['mint']==mint]}
-            if session.process(snapshot) is not None:
+            event=session.process(snapshot)
+            if event is not None:
                 processed += 1
+                if retained and event['action'] in ('reject','watch','paper_buy'):
+                    status={'reject':'entry_rejected','watch':'watch','paper_buy':'confirmed_buy'}[event['action']]
+                    retained.observe(snapshot,dict(event,status=status),session.trader.rules)
         except UnsupportedMarket as error:
+            if retained: retained.remove(mint)
             skipped[mint]=source_error(error)
         except Exception as error:
+            if retained: retained.failed(mint)
             errors[mint] = source_error(error)
 
     # A discovery/RPC outage must not postpone the first open-position quote.
@@ -93,7 +103,9 @@ def markets_once(session, sources, mints, discover=False, narrative_store=None, 
                 errors['wallet_watch'] = {'status': watch_report.get('status', 'incomplete'), 'wallets': watch_report['errors']}
         except Exception as error:
             errors['wallet_watch'] = source_error(error)
-    queue = candidate_queue(session,position,mints,watched,discovered)
+    queue = candidate_queue(session,position,mints,watched,discovered,10 if session.trader.rules.entry_style=='volume_candles' else 6)
+    if retained:
+        queue=list(dict.fromkeys(([position['mint']] if position else [])+retained.due(10)+queue))[:10]
     for mint in queue:
         if position and mint == position['mint']:
             continue
@@ -117,6 +129,7 @@ def main():
     parser.add_argument('--native-sol', type=float, help='Optional virtual native SOL; enables execution-cost/reserve ledger')
     parser.add_argument('--sol-price', type=float, help='Initial SOL/USD valuation when using --native-sol')
     parser.add_argument('--profile',choices=['current','moderate','aggressive','adaptive'],help='Shared entry-tolerance profile; existing runs require reset or a fresh state directory')
+    parser.add_argument('--adopt-rules',action='store_true',help='Explicitly adopt profile-mode/drawdown-schedule changes under identical other rules; preserves balances, positions, losses and existing halts')
     parser.add_argument('--rules', type=Path)
     parser.add_argument('--exploratory',action='store_true',help='Paper-only market/chart experiment; unknown safety stays unqualified')
     parser.add_argument('--assume-usd-costs', action='store_true', help='Explicit scenario mode without a native-SOL ledger')
@@ -171,13 +184,15 @@ def main():
     exists = (args.state_dir/'paper.sqlite').exists()
     if (not exists or args.reset) and args.native_sol is None and not args.assume_usd_costs:
         parser.error('Supply --native-sol and --sol-price to match inventory, or explicitly choose --assume-usd-costs')
+    if args.adopt_rules and (not exists or args.reset or rules is None): parser.error('--adopt-rules requires an existing run and explicit rules without reset')
     session = PaperSession(args.state_dir, None if args.reset and exists else args.balance,
-                           None if args.reset and exists else rules,
+                           None if args.reset and exists or args.adopt_rules else rules,
                            None if args.reset and exists else args.native_sol,
                            None if args.reset and exists else args.sol_price)
     narratives = None
     watcher = None
     try:
+        if args.adopt_rules: session.adopt_entry_mode(rules)
         if args.reset and exists:
             previous = session.reset(args.balance, rules, args.native_sol, args.sol_price)
             print(json.dumps({'mode': 'paper_only', 'archived_run': previous, 'new_run': session.run_id}))
@@ -193,9 +208,9 @@ def main():
         session.publish({'status':'starting_sources'})
         if session.trader.rules.evidence_mode=='market_only':
             from pump_market import ModeledPumpSources
-            sources=ModeledPumpSources(args.evidence_dir)
+            sources=ModeledPumpSources(args.evidence_dir,include_legacy_metrics=session.trader.rules.entry_style!='volume_candles')
         else:
-            sources=PumpMarketSources(args.evidence_dir)
+            sources=PumpMarketSources(args.evidence_dir,include_legacy_metrics=session.trader.rules.entry_style!='volume_candles')
         if args.watch_wallet:
             from wallet_signals import SharedWalletFeed, ensure_worker, digest
             watchlist = args.watchlist
@@ -221,7 +236,11 @@ def main():
             if not args.loop:
                 break
             # Short sleeps permit prompt interruption even with a long polling interval.
-            deadline = time.monotonic()+args.interval
+            rest=args.interval
+            if session.trader.position and session.trader.rules.entry_style=='volume_candles':
+                from meme_profiles import response_rest
+                rest=min(rest,response_rest(session.trader.position.get('entry_profile'),holding=True))
+            deadline = time.monotonic()+rest
             while time.monotonic() < deadline:
                 time.sleep(max(0, min(1, deadline-time.monotonic())))
     except KeyboardInterrupt:

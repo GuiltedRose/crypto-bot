@@ -2,6 +2,175 @@
 
 ## Current meme execution runner
 
+### Current minimal entry policy (supersedes profile/dip notes below)
+
+The current `meme_live_rules.json` uses `entry_style: volume_candles` and
+`entry_profile_mode: adaptive` with:
+
+- At least **$5,000 provider-reported buy volume over one hour**.
+- **Three real, completed one-minute candles**, configurable to two if explicitly
+  requested in `trend_min_bars`. Partial, duplicate, wrong-mint, malformed and
+  stale data remain invalid. Sparse real candles are accepted without inventing
+  missing intervals; no upward trend is inferred from the candle count.
+- **$1.78 maximum input**, unchanged **$1 net TP** and **$0.20 net SL trigger**.
+
+Trend direction, pullback range, maximum candle range, wick ratios, social
+presence, provider liquidity thresholds, and the bounded holder/trade-cluster
+screen no longer gate entries under this policy. In particular, it no longer
+waits for a dip: it can enter a falling coin once volume/candle minimums pass.
+The previous pullback/veto-based profile selector and armed-dip proposal are not used here. Adaptive response profiles remain enabled as described below. Hot
+boards, leaderboards and wallet activity remain discovery/priority information.
+Other displayed scorecard/market metrics are diagnostic only.
+
+Technical execution failsafes remain: mainnet/mint/pool/account identity,
+supported token programs/extensions and revoked authorities, exact-input and
+minimum-output bounds, configured slippage, network/rent/funding limits, fresh
+on-chain quotes, unsigned buy/sell probes, sell simulation, one position,
+no duplicate-candle re-entry, uncertain-order recovery, native fee/$1 cash
+reserves, unchanged TP/SL, and the existing 15-minute holding limit. The actual
+adapter's reserve-impact limit may still reject a technically unexecutable size.
+No manipulation/bundle-safety claim is made for this minimal market policy.
+
+Adaptive mode classifies each qualifying coin by the largest high-to-low/open
+range among its latest required candles: Current <=30%, Moderate >30–45%,
+Aggressive >45% (there is **no upper volatility rejection** in this policy).
+All three share the same $5,000/three-candle market minimums, $1.78 maximum
+input, $1 TP, $0.20 SL and 0.5% slippage. Profiles now change response cadence,
+not admission requirements or stakes: holding rests are capped at 15/12/10
+seconds; fresh flat-wallet regime rests at 30/20/10 seconds. Source latency adds
+to these intervals. The selector is rules-based, not a trained profit model.
+A qualifying coin proceeds to transaction preparation rather than waiting for
+a dip; execution and bot-loss failsafes can still prevent a trade.
+
+The live **wallet-wide** drawdown trigger has been removed. The loss failsafe
+uses confirmed bot realized P&L plus estimated net liquidation P&L of its own
+journaled token units. Manual trades/positions/transfers and unallocated SOL
+price changes do not enter this P&L or promote/demote the bot.
+
+The current schedule uses **15% base** and **30% promoted** drawdown. Initial
+promotion requires bot-tracked bankroll (starting capital plus bot realized and
+estimated net open P&L) to reach **$1,000**, with at least $1,000 total wallet
+value available. Once promoted, it demotes only when **total bankroll drops
+below $1,000**, including after a withdrawal. At exactly $1,000 the promoted
+tier remains. After a withdrawal below the threshold, historical bot profits
+cannot immediately re-promote it: total value must also recover to $1,000.
+
+The active fraction applies to **current total bankroll**: $1,000 at 30% means
+$300; after withdrawing to $800, the demoted 15% limit is $120. Withdrawal does
+not enter bot loss P&L or reset its high-water mark; it changes the available
+risk budget and tier. Actual drawdown remains the peak-to-current change in
+bot P&L only. A smaller budget can stop existing bot losses that exceed the
+new limit, without classifying the withdrawal itself as a trading loss.
+
+Total valuation includes native SOL, WSOL, USDC, other SPL/Token-2022 holdings
+with identity-checked public USD prices, and tracked recoverable bot account
+rent. Token quantities are fetched fresh; token prices are cached at most 60
+seconds. Unpriceable assets are explicitly unknown, not invented zeros. If
+incomplete valuation could affect a promoted/eligible tier, new entries pause;
+held bot positions retain exits. The last complete reference is retained until
+promotion/demotion can be verified, rather than making a false tier transition.
+
+Rules are `drawdown_halt: 0.15`, `drawdown_promotion_bankroll_usd: 1000`,
+`promoted_drawdown_halt: 0.30`, and
+`drawdown_bankroll_basis: total_for_demotion`. Paper and live share the schedule.
+Threshold zero disables promotion for legacy experiments and preserves their
+original fixed-capital limit. Active tier, bot bankroll, total valuation and
+dollar limit are exposed in risk state; live tier transitions are journaled.
+No trade-size, TP, SL or slippage setting changes with this promotion.
+
+Actual bot loss halts remain latched: promotions do not automatically clear
+an already-triggered stop. A legacy wallet-only halt is migrated on the next
+user launch only when no bot activity/orders/position can have caused it.
+Ambiguous legacy halts with bot activity stay stopped for review. Historic
+marks, P&L and order journals are preserved; no external process clears a
+running trader's halt. New minimal-policy paper runs use this same bot-P&L
+basis and retain their existing balance, open positions and loss history when
+the explicit drawdown schedule is adopted.
+
+Stop the old process and, while flat, adopt this changed policy with:
+
+```bash
+.venv/bin/python run_meme_live.py --execute --loop --profile adaptive --adopt-rules
+```
+
+**`--profile adaptive` is supported and enabled by the configured rules.** It selects response regimes without restoring the removed entry vetoes. This command is user-operated and can spend funds. Stopping never
+liquidates positions. No funded process is restarted by the assistant.
+
+Due watched candidates now precede incoming leads within the ten-candidate
+limit. Retained candidates stop occupying slots when their observed volume
+falls below the requirement, become unsupported, expire, or a known risk flag
+invalidates them. In this policy a candidate with sufficient volume can be
+retained while it waits for its third real candle; fresh entry/execution checks
+still apply each time. Read-only source delays can still cause missed moves.
+
+A separate paper trial runs in `state/paper_volume/`, starting with $6.50 virtual
+all-SOL inventory at its recorded startup valuation. It does not import prior
+profits or reset old ledgers. Earlier paired tolerance experiments remain in
+`state/paper_comparison/`, with their existing loss halts preserved. Their status
+remains available using `run_paper_compare.py --status`. Active paper trial
+results are in `state/paper_volume/report.json`. Explicit profile-mode or drawdown-threshold paper adoption is audited without resetting capital, positions, P&L or existing loss halts; other financial or admission changes still require a separate experiment. Resume it without new inventory:
+
+```bash
+.venv/bin/python run_paper.py --state-dir state/paper_volume --rules meme_live_rules.json --discover --loop --interval 30
+```
+
+A second installation on the Neo uses the same code with its own owner-only
+`.env` and local state. Credentials and state must not be shared through Git.
+
+### Manual wallet history as separate research
+
+The supplied public profile `https://pump.fun/profile/LunaMoth69?tab=closed`
+was linked to the user-provided wallet through Pump's anonymous
+`/users/<wallet>` record. The profile HTML was inaccessible in this environment;
+research therefore archives confirmed on-chain receipts, not scraped UI P&L.
+
+`run_manual_research.py` defaults to **February 1, 2026, America/New_York** and
+backfills available public history in bounded batches (at most five receipts
+per cycle). It needs no `.env`, keys, cookies or transaction-submission method.
+
+```bash
+.venv/bin/python run_manual_research.py --profile LunaMoth69 --wallet Eqq7Kkti4RhMUPDfNcDS3hioJW8RTCfNtvPA68fNBqzs --since 2026-02-01 --loop
+```
+
+Its private local archive is `state/manual_research/activity.sqlite`; progress
+is `summary.json`. A single-writer lock prevents duplicate collectors. Known
+bot-order signatures from `state/meme_live/orders.sqlite` remain in the archive
+and are tagged `bot_order`, including orders identified after collection. They
+are separated from the manual-only subset, not discarded from research.
+Other user-wallet activity is not automatically labeled human or profitable.
+Historical timestamps remain original and are never inserted into the fresh
+wallet-signal cache, so the bot cannot treat its own history as independent
+current buying demand. `meme_results.py` exposes research progress separately
+from the bot's actual trade results.
+
+The bot also researches **its own orders**. New reserved live intents retain
+pre-order market inputs, selected profile, scorecard and unchanged risk limits.
+`meme_learning.py` pairs confirmed buys and sells by the bot's journal, including
+net outcomes, network fees, failed orders, exit reasons and open/unmatched
+positions. Paper decisions use their original full snapshots and are labeled
+`bot_paper`, separately from `bot_live`. Archived/reset paper runs stay in the
+research report; losing or unfinished trades are never silently removed.
+
+```bash
+.venv/bin/python meme_learning.py
+```
+
+The report is `state/research/bot_outcomes.json`, refreshed by the research
+worker even while public-history collection is unavailable. It gives empirical
+per-profile/source performance and decision-to-outcome records. The data is a
+learning foundation, not an already validated model: there is currently no
+automatic funded-policy rewrite or claim of predictive improvement from a few
+paper outcomes. Manual receipt deltas do not become profit labels before
+cost/rent reconstruction. The bot's own purchases never become independent
+fresh-market endorsements merely because they are in this research archive.
+
+Missing receipts remain pending; ambiguous routed trades/transfers remain
+unclassified. Net SOL/token deltas may contain account rent or other movements,
+so they are not validated profit labels. No full February-to-present import,
+complete archive, historical candle/liquidity reconstruction or automated
+policy training is claimed until those steps are actually supported. Research
+collection never modifies bot balances, position state, P&L or loss halts.
+
 ### Hot-token and top-trader discovery
 
 The shared read-only collector now adds Pump's anonymous hot-token board and
@@ -45,9 +214,9 @@ stale ranks or buys cannot be renewed just by rereading the file. Reload the
 shared collector after a code update; real-money runners require a user-managed
 restart to import the new discovery/ranking code.
 
-### Per-coin entry tolerance and paired testing
+### Previous per-coin entry tolerance and paired testing (historical)
 
-The configured live policy is now `entry_profile_mode: adaptive`, explicitly
+The previous live policy used `entry_profile_mode: adaptive`, explicitly
 selected by the user. On each fresh coin observation, paper and live assess:
 
 | Profile | Maximum 1m range | Minimum hourly buys | Pullback |

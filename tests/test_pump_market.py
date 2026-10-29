@@ -61,3 +61,14 @@ class PumpMarketTests(unittest.TestCase):
 
 
 if __name__=='__main__': unittest.main()
+
+class MinimalMarketCollectionTests(unittest.TestCase):
+    setUp=PumpMarketTests.setUp
+    fetch=PumpMarketTests.fetch
+    def test_minimal_policy_does_not_fetch_unused_ath_or_holder_fields(self):
+        urls=[]
+        def fetch(url): urls.append(url);return self.fetch(url)
+        row=PumpMarketSources(fetch=fetch,include_legacy_metrics=False).observation(MINT,now=1000)
+        self.assertEqual(len(urls),3)
+        self.assertFalse(any('/ath?' in url or '/token-holders/' in url for url in urls))
+        self.assertIn('buy_volume_usd',row);self.assertIn('candle_history',row)

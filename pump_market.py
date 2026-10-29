@@ -36,6 +36,10 @@ def pump_history(payload,mint,pool,url,now):
 
 class PumpMarketSources(PublicSources):
     modeled_quotes_only=False
+
+    def __init__(self,*args,include_legacy_metrics=True,**kwargs):
+        super().__init__(*args,**kwargs)
+        self.include_legacy_metrics=include_legacy_metrics
     def observation(self,mint,now=None,pool=None):
         if not valid_mint(mint) or pool is not None and not valid_mint(pool):
             raise ValueError('Invalid mint or pool')
@@ -58,7 +62,9 @@ class PumpMarketSources(PublicSources):
         holders_url=ROOT+'/token-holders/'+mint+'/count'
         data,errors={},{}
         # Each auxiliary failure leaves the current quote available for held exits.
-        for label,source in (('candles',candle_url),('activity',activity_url),('ath',ath_url),('holders',holders_url)):
+        auxiliary=[('candles',candle_url),('activity',activity_url)]
+        if self.include_legacy_metrics: auxiliary += [('ath',ath_url),('holders',holders_url)]
+        for label,source in auxiliary:
             try: data[label]=self.fetch(source)
             except Exception as error: errors[label]=source_error(error)
         now=int(time.time()) if now is None else now

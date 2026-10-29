@@ -5,12 +5,13 @@ inherits or promotes paper cash, positions, proof flags or simulated fills.
 """
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import time
 from live import Rpc, LiveOrders
 from meme_dip import DipRules, SOL_MINT, USDC_MINT
-from meme_execution import TOKEN, WSOL
+from meme_execution import TOKEN, TOKEN2022, WSOL
 from solders.pubkey import Pubkey
 from meme_live import MemeLiveStore, MemeLiveEngine, positive
 from pump_market import PumpMarketSources
@@ -30,41 +31,67 @@ class SimulationRpc:
 
 
 def valuation(sources):
+    now=time.time();cached=getattr(sources,'_recent_sol_valuation',None)
+    if cached and 0<=now-cached['retrieved_at']<=15 and 0<=now-cached['source_at']<=120:
+        return cached['price']
     row=sources.fetch(ROOT+'/sol-price');now=time.time()
     if row.get('stale') is not False or not 0<=now-float(row['asOfTimestamp'])/1000<=120:
         raise ValueError('Fresh SOL/USD valuation unavailable')
-    return positive(float(row['solPrice']))
+    price=positive(float(row['solPrice']))
+    sources._recent_sol_valuation={'retrieved_at':now,'source_at':float(row['asOfTimestamp'])/1000,'price':price}
+    return price
 
 
 def wallet_equity(rpc,user,price,position,sources,rent_accounts=()):
-    """Native SOL, WSOL, USDC and the journaled position; unrelated coins excluded."""
+    """Value native SOL + all known SPL/Token-2022 holdings without fake zeros.
+
+    Unpriceable holdings are exposed as incomplete; promotion/demotion waits
+    for a complete valuation when the $1k tier could be affected.
+    """
     native=rpc.call('getBalance',[user,{'commitment':'confirmed'}])['value']/1e9
-    stable=wrapped=0
-    result=rpc.call('getTokenAccountsByOwner',[user,{'programId':str(TOKEN)},{'encoding':'jsonParsed','commitment':'confirmed'}])
-    for row in result['value']:
-        info=row['account']['data']['parsed']['info']
-        if info['owner']!=user: raise ValueError('Wallet inventory owner mismatch')
-        units=int(info['tokenAmount']['amount'])
-        if info['mint']==SOL_MINT: wrapped+=units/1e9
-        if info['mint']==USDC_MINT: stable+=units/1e6
-    equity=stable+(native+wrapped)*price
+    holdings={};unknown=[]
+    for program in (TOKEN,TOKEN2022):
+        response=rpc.call('getTokenAccountsByOwner',[user,{'programId':str(program)},{'encoding':'jsonParsed','commitment':'confirmed'}])
+        for row in response['value']:
+            try:
+                info=row['account']['data']['parsed']['info']
+                if info['owner']!=user: raise ValueError('Wallet inventory owner mismatch')
+                mint=info['mint'];units=int(info['tokenAmount']['amount']);decimals=info['tokenAmount']['decimals']
+                if units<0 or type(decimals) is not int or not 0<=decimals<=18: raise ValueError('Invalid token quantity')
+                if not units: continue
+                if mint in holdings and holdings[mint][1]!=decimals: raise ValueError('Inconsistent token decimals')
+                holdings[mint]=(holdings.get(mint,(0,decimals))[0]+units,decimals)
+            except (KeyError,TypeError): unknown.append(row.get('pubkey','unparsed_token_account'))
+    equity=native*price;now=time.time()
+    cache=getattr(sources,'_bankroll_price_cache',{});sources._bankroll_price_cache=cache
+    for mint,(units,decimals) in holdings.items():
+        quantity=units/(10**decimals)
+        if mint==SOL_MINT: equity+=quantity*price;continue
+        if mint==USDC_MINT: equity+=quantity;continue
+        cached=cache.get(mint)
+        if cached and 0<=now-cached['at']<=60:
+            value=cached['price']
+        else:
+            try:
+                if not valid_mint(mint): raise ValueError('Invalid holding mint')
+                row=sources.fetch(ROOT+'/coins-v3/'+mint+'?includeLiveStreamInfo=false')
+                if row['mint']!=mint or row.get('chain_id') not in (None,'solana','solana:mainnet','solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp'): raise ValueError('Holding-price identity mismatch')
+                value=float(row['price_usd'])
+                if not math.isfinite(value) or value<0: raise ValueError('Holding price unavailable')
+            except Exception: value=None
+            cache[mint]={'at':time.time(),'price':value}
+        if value is None: unknown.append(mint)
+        else: equity+=quantity*value
     if rent_accounts:
         import base64
         accounts=rpc.call('getMultipleAccounts',[list(rent_accounts),{'encoding':'base64','commitment':'confirmed'}])['value']
         for address,account in zip(rent_accounts,accounts):
-            if account is None: continue  # A user-closed account has returned its rent already.
+            if account is None: continue
             raw=base64.b64decode(account['data'][0],validate=True)
-            if len(raw)<165 or raw[32:64]!=bytes(Pubkey.from_string(user)):
-                raise ValueError('Tracked rent account identity changed')
+            if len(raw)<165 or raw[32:64]!=bytes(Pubkey.from_string(user)): raise ValueError('Tracked rent account identity changed')
             backing=int.from_bytes(raw[64:72],'little') if raw[:32]==bytes(WSOL) else 0
             equity+=max(0,account['lamports']-backing)/1e9*price
-    if position:
-        # Position receives an independent current on-chain sell quote. Missing
-        # discovery/social feeds never block an already known exit path.
-        from meme_execution import MemeAdapter
-        adapter=MemeAdapter(rpc,user,position['mint'],position['pool'],position['kind'])
-        market=adapter.snapshot()
-        equity+=adapter.output('sell',position['units'],market)/1e9*price
+    sources._bankroll_valuation={'complete':not unknown,'known_value_usd':equity,'unpriced_mints':unknown,'observed_at':time.time()}
     return equity
 
 
@@ -83,11 +110,13 @@ def tick(engine,sources,feed,wallets,mints,discover=True,progress=None):
             candidate.snapshot()
             position.update(pool=row['pool'],kind=row['market_kind'])
             engine.store.save('verified_migration',{'mint':row['mint'],'pool':row['pool'],'kind':row['market_kind']})
-        equity=wallet_equity(engine.rpc,engine.user,price,position,sources,engine.store.state.get('rent_accounts',[]))
+        equity=wallet_equity(engine.rpc,engine.user,price,None,sources,engine.store.state.get('rent_accounts',[]))
+        engine.bankroll_valuation=getattr(sources,'_bankroll_valuation',{'complete':True})
         return engine.prepare(row,price,equity)
     equity=wallet_equity(engine.rpc,engine.user,price,None,sources,engine.store.state.get('rent_accounts',[]))
+    engine.bankroll_valuation=getattr(sources,'_bankroll_valuation',{'complete':True})
     engine.mark(equity)
-    if engine.store.state['halted']: return {'status':'drawdown_halted'}
+    if engine.store.state['halted']: return {'status':'drawdown_halted','risk':engine.store.state.get('strategy_risk',{})}
     context=feed.poll(wallets)
     ranked=rank_candidate_mints(context)
     errors={};skipped={};discovered=[]
@@ -96,8 +125,8 @@ def tick(engine,sources,feed,wallets,mints,discover=True,progress=None):
         except Exception as error: errors['discovery']=type(error).__name__
     from meme_watchlist import CandidateWatchlist,token_analysis
     watchlist=CandidateWatchlist(engine.store.db)
-    due=watchlist.due(3)
-    pinned=list(dict.fromkeys(mints+due+ranked[:2]))[:10]
+    due=watchlist.due(10)
+    pinned=list(dict.fromkeys(due+mints+ranked[:2]))[:10]
     remaining=[mint for mint in dict.fromkeys(ranked+discovered) if mint not in pinned]
     cursor=engine.store.state.get('scan_cursor',0)
     count=min(10-len(pinned),len(remaining))
@@ -117,6 +146,7 @@ def tick(engine,sources,feed,wallets,mints,discover=True,progress=None):
             # Fetch a fresh valuation after potentially slow market requests.
             current_price=valuation(sources)
             current_equity=wallet_equity(engine.rpc,engine.user,current_price,None,sources,engine.store.state.get('rent_accounts',[]))
+            engine.bankroll_valuation=getattr(sources,'_bankroll_valuation',{'complete':True})
             result=engine.prepare(row,current_price,current_equity)
             if getattr(engine,'last_profile_selection',None): result['profile_selection']=engine.last_profile_selection
             result['watchlist']=watchlist.observe(row,result,engine.rules)
@@ -133,11 +163,16 @@ def tick(engine,sources,feed,wallets,mints,discover=True,progress=None):
             errors[mint]=type(error).__name__
             if progress: progress({'status':'candidate_source_error','mint':mint,'error_type':type(error).__name__})
     return {'status':'scan_complete','decisions':decisions,'source_errors':errors,'skipped_markets':skipped,
-            'realized_pnl_usd':engine.store.state['realized_pnl_usd'],'execution_enabled':engine.execute,'watched_candidates':watchlist.count()}
+            'realized_pnl_usd':engine.store.state['realized_pnl_usd'],'execution_enabled':engine.execute,'watched_candidates':watchlist.count(),'strategy_risk':engine.store.state.get('strategy_risk',{})}
 
 
 def cycle_rest(state,interval):
-    return min(interval,15) if state.get('position') or state.get('pending') else interval
+    from meme_profiles import response_rest
+    active=state.get('position') or state.get('pending')
+    if active: return min(interval,response_rest(active.get('entry_profile'),holding=True))
+    recent=state.get('last_entry_regime')
+    if recent and 0<=time.time()-recent['observed_at']<=120: return min(interval,response_rest(recent['profile']))
+    return interval
 
 
 def startup_error(error):
@@ -183,9 +218,10 @@ def main():
     if not 10<=args.interval<=3600: parser.error('Interval must be 10 through 3600 seconds')
     if len(args.mint)>5 or any(not valid_mint(mint) for mint in args.mint): parser.error('At most five valid mints')
     from meme_profiles import selected
-    rules=selected(DipRules(**json.loads(args.rules.read_text())),args.profile)
-    if rules.entry_style!='trend_pullback' or min(rules.max_position_usd,rules.take_profit_usd,rules.max_loss_usd)<=0:
-        parser.error('Live meme profile requires trend strategy and explicit dollar limits')
+    base_rules=DipRules(**json.loads(args.rules.read_text()))
+    rules=selected(base_rules,args.profile)
+    if rules.entry_style not in ('trend_pullback','volume_candles') or min(rules.max_position_usd,rules.take_profit_usd,rules.max_loss_usd)<=0:
+        parser.error('Live meme profile requires a supported entry policy and explicit dollar limits')
     os.umask(0o077)
     signer=orders=None
     if args.execute:
@@ -213,12 +249,15 @@ def main():
             global_lock=Path('state/runner.lock').open('a')
             fcntl.flock(global_lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
             orders=LiveOrders(rpc,str(directory/'orders.sqlite'))
-        from meme_onchain_risk import OnchainRisk
-        risk_rpc=SimulationRpc(Rpc(args.risk_rpc)) if args.risk_rpc else SimulationRpc(rpc)
-        if args.risk_rpc:
-            from wallet import MAINNET_GENESIS
-            if risk_rpc.call('getGenesisHash',[])!=MAINNET_GENESIS: raise ValueError('Risk RPC must be mainnet')
-        engine=MemeLiveEngine(rpc,user,store,rules,orders,signer,risk_assessor=OnchainRisk(risk_rpc))
+        risk_assessor=None
+        if rules.entry_style!='volume_candles':
+            from meme_onchain_risk import OnchainRisk
+            risk_rpc=SimulationRpc(Rpc(args.risk_rpc)) if args.risk_rpc else SimulationRpc(rpc)
+            if args.risk_rpc:
+                from wallet import MAINNET_GENESIS
+                if risk_rpc.call('getGenesisHash',[])!=MAINNET_GENESIS: raise ValueError('Risk RPC must be mainnet')
+            risk_assessor=OnchainRisk(risk_rpc)
+        engine=MemeLiveEngine(rpc,user,store,rules,orders,signer,risk_assessor=risk_assessor,fixed_profile=args.profile if args.profile!='adaptive' else None)
         def publish(result):
             record={'timestamp':time.time(),'mode':'live' if args.execute else 'unsigned_simulation',**result}
             tmp=directory/'status.tmp';tmp.write_text(json.dumps(record,allow_nan=False));tmp.replace(directory/'status.json')
@@ -230,7 +269,7 @@ def main():
         try: ensure_worker(args.watchlist,args.wallet_source_dir,args.rpc)
         except (OSError,ValueError): pass
         feed=SharedWalletFeed(args.wallet_source_dir)
-        sources=PumpMarketSources(args.evidence_dir)
+        sources=PumpMarketSources(args.evidence_dir,include_legacy_metrics=rules.entry_style!='volume_candles')
         while True:
             try: result=tick(engine,sources,feed,wallets,args.mint,not args.no_discover,progress=publish)
             except Exception as error:

@@ -12,6 +12,9 @@ def format_status(record,rules=None):
     if status=='token_analysis': return analysis_summary(record)
     if status=='started':
         return f"{prefix} Started | position: {'open' if record.get('position_open') else 'none'} | pending order: {'yes' if record.get('pending_order') else 'none'}"
+    if status=='drawdown_halted' and record.get('risk',{}).get('scope')=='bot_positions':
+        risk=record['risk']
+        return f"{prefix} BOT DRAWDOWN HALTED | drawdown ${risk.get('drawdown_usd',0):.2f} / ${risk.get('limit_usd',0):.2f} | manual holdings excluded"
     if status=='checking_wallet_and_market': return f'{prefix} Checking wallet and market data…'
     if status=='scanning_candidate': return f"{prefix} Scanning {record['candidate']}/{record['total_candidates']}: {short}"
     if status=='scan_complete':
@@ -76,6 +79,11 @@ def scan_summary(record,clock):
     pnl=record.get('realized_pnl_usd',0)
     lines+=['',line('Realized P&L',('-' if pnl<0 else '')+f'${abs(pnl):.2f}'),
             line('Live execution','ENABLED' if record.get('execution_enabled') is True else 'DISABLED')]
+    risk=record.get('strategy_risk',{})
+    if risk.get('active_drawdown_fraction') is not None:
+        lines.append(line('Bot bankroll',f"${risk['bot_bankroll_usd']:.2f}"))
+        lines.append(line('Drawdown tier',f"{risk['tier']} {risk['active_drawdown_fraction']:.0%}"))
+        lines.append(line('Drawdown limit',f"${risk['limit_usd']:.2f}"))
     if 'next_check_seconds' in record: lines.append(line('Next check',f"{record['next_check_seconds']:g}s"))
     if record.get('mode')=='unsigned_simulation': lines.append('Unsigned simulation; no trades submitted.')
     return '\n'.join(lines)

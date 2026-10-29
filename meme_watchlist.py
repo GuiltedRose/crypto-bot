@@ -42,7 +42,9 @@ class CandidateWatchlist:
             interest=social_interest(snapshot,now,rules)['present']
             demand=snapshot['buy_volume_usd']>=rules.min_buy_volume_usd
         except (KeyError,TypeError,ValueError): fresh=interest=demand=False
-        promising=fresh and (result.get('status')=='watch' or (interest and demand))
+        promising=fresh and (result.get('status')=='watch' or (demand if rules.entry_style=='volume_candles' else interest and demand))
+        if rules.entry_style=='volume_candles' and previous and fresh and not demand:
+            self.remove(mint);return {'retained':False,'reason':'buy-volume opportunity no longer qualifies'}
         if not promising and not previous: return {'retained':False}
         reason=(result.get('signal',{}).get('reason') or result.get('reason') or
                 '; '.join(result.get('reasons') or risk.get('reasons') or ['waiting for fresh qualifying data']))[:256]
@@ -77,6 +79,9 @@ def token_analysis(snapshot,result,rules,now):
     liquidity='Acceptable for configured size' if depth.get('score')==1 else 'Limited' if depth.get('score') is not None else 'Not assessed'
     risk=result.get('risk') or result.get('intent',{}).get('onchain_risk')
     risk_label='Not checked yet'
+    if rules.entry_style=='volume_candles':
+        risk_label='Execution checks pending'
+        if result.get('status') in ('unsigned_simulation_passed','confirmed_buy'): risk_label='Execution checks passed'
     if isinstance(risk,dict):
         risk_label='Bounded checks passed' if risk.get('passed') is True else risk.get('status','Unknown').replace('_',' ').capitalize()
     status=result.get('status','unknown')
@@ -93,6 +98,6 @@ def token_analysis(snapshot,result,rules,now):
             'hot_board':interest.get('hot_board'),'hot_rank':interest.get('hot_rank'),
             'hot_watched_overlap':interest.get('hot_watched_overlap',False),'momentum':momentum,'buy_volume':buy_volume,'watched_buyers':interest['watched_buy_wallets'],
             'fresh_callouts':len(ids),'fresh_authors':interest['callout_authors'],'social_source_status':context.get('source_status','unknown'),
-            'liquidity':liquidity,'onchain_risk':risk_label,'strategy':'Trend Pullback','decision':decision,'reason':reason,
+            'liquidity':liquidity,'onchain_risk':risk_label,'strategy':'Volume + Candles' if rules.entry_style=='volume_candles' else 'Trend Pullback','decision':decision,'reason':reason,
             'profile_selection':result.get('profile_selection'),'entry_profile':result.get('intent',{}).get('entry_profile'),
             'watchlist':result.get('watchlist',{}),'scorecard':result.get('scorecard')}
