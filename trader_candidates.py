@@ -57,7 +57,7 @@ if __name__=='__main__':
     if not 0<=args.transactions<=20:
         parser.error('Use 0 through 20 transactions per query')
     try:
-        report=inspect_wallet(Rpc('https://api.mainnet.solana.com'),args.address,args.transactions)
+        report=inspect_wallet(Rpc('https://api.mainnet-beta.solana.com'),args.address,args.transactions)
         Path('data/discovery').mkdir(parents=True,exist_ok=True)
         Path('data/discovery/'+args.address+'.json').write_text(json.dumps(report,indent=2)+'\n')
         print(json.dumps({'address':args.address,'candidate_mints':len(report['candidates']),

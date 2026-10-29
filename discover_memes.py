@@ -20,8 +20,8 @@ from market import USDC_MINT
 from sniping import CAPITAL_THRESHOLD_USD
 from live import Rpc
 
-RPC_URL='https://api.mainnet.solana.com'
-WSS_URL='wss://api.mainnet.solana.com'
+RPC_URL='https://api.mainnet-beta.solana.com'
+WSS_URL='wss://api.mainnet-beta.solana.com'
 MAX_AGE=300
 
 

@@ -146,6 +146,13 @@ def scan_one(asset,now,fetch=fetch_scan_json,request_delay=4):
         (folder/'candles.json').write_text(json.dumps([asdict(c) for c in bars]))
         (folder/'provenance.json').write_text(json.dumps({'source_url':url,'sha256':hashlib.sha256(raw).hexdigest(),
             'pool':pool,'retrieved_at':now,'risk_retrieved_at':now if needs_screen else None,'verification':verification},indent=2))
+    meme_evidence=None
+    candle_quality=None
+    if asset['classification']=='mature_meme_candidate':
+        from meme_evidence import load_meme_evidence
+        meme_evidence=load_meme_evidence(mint,pool['pool'],now)
+        from candle_quality import assess_hourly
+        candle_quality=assess_hourly(asset,pool,bars,url,now,now)
     current=decide(bars,now,bars[-1].close)
     at_close=decide(bars,bars[-1].timestamp+3600,bars[-1].close)
     upper=max(b.high for b in bars[-21:-1])
@@ -153,7 +160,7 @@ def scan_one(asset,now,fetch=fetch_scan_json,request_delay=4):
     from venue_policy import entry_allowed
     execution_supported=asset.get('approved_for_live',False) and entry_allowed('pumpswap' if mint==SOL_MINT else 'jupiter')
     return {'symbol':asset['symbol'],'mint':mint,'classification':asset['classification'],**pool,'candles':len(bars),
-        'mature_meme_screening':screening,
+        'mature_meme_screening':screening,'meme_evidence':meme_evidence,'candle_quality':candle_quality,
         'risk_screening_required':asset.get('screening_required',False) or asset['classification']=='mature_meme_candidate',
         'latest_close':bars[-1].close,'latest_candle_timestamp':bars[-1].timestamp,
         'upper_channel':upper,'lower_channel':lower,'current_signal':asdict(current),
@@ -161,7 +168,7 @@ def scan_one(asset,now,fetch=fetch_scan_json,request_delay=4):
         'spot_execution_supported':execution_supported,
         'execution_adapter':'direct_pumpswap' if mint==SOL_MINT else 'keyless_jupiter',
         'execution_blocker':None if execution_supported else 'Venue eligibility or live approval blocks entry',
-        'entry_eligible':execution_supported and (screening is None or screening['passed']),
+        'entry_eligible':execution_supported and (screening is None or screening['passed']) and (meme_evidence is None or meme_evidence['passed']) and (candle_quality is None or candle_quality['passed']),
         'execution_note':'Live portfolio router; fresh route, balances, screening and cost checks still required',
         'history_verification':verification}
 

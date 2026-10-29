@@ -1,0 +1,7 @@
+{
+  "source_url": "https://raw.githubusercontent.com/pump-fun/pump-public-docs/8cda1fa30ea658b20909d8aedf002047119388d2/idl/pump_amm.json",
+  "commit": "8cda1fa30ea658b20909d8aedf002047119388d2",
+  "sha256": "b7d8c57a4d9c4dd0109a9ab893052352333252d4eedced10ac091d4d66cab89b",
+  "program": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+  "note": "Restores a missing public specification only; not evidence of successful swap simulation or live adapter readiness."
+}

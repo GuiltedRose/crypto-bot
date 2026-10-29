@@ -146,6 +146,8 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--events',required=True,help='Complete, current pool event JSONL recording')
     parser.add_argument('--once',action='store_true')
+    parser.add_argument('--watchlist',type=Path,default=Path('paper_watchlist.json'))
+    parser.add_argument('--wallet-source-dir',type=Path,default=Path('state/wallet_watch'))
     parser.add_argument('--sol-only',action='store_true',help='Use legacy direct SOL pool only')
     args=parser.parse_args()
     os.umask(0o077)
@@ -170,11 +172,27 @@ def main():
     if not args.sol_only:
         start_improvement_worker(state_dir)
         start_discovery_worker(state_dir)
+    from wallet_signals import ensure_worker, load_watchlist, read_signals, live_context, unavailable
+    try:
+        ensure_worker(args.watchlist,args.wallet_source_dir)
+    except (OSError,ValueError,KeyError,TypeError):
+        pass  # Research availability must not stop reconciliation or exits.
     while True:
+        try:
+            watched=read_signals(load_watchlist(args.watchlist),args.wallet_source_dir)
+        except (OSError,ValueError,KeyError,TypeError):
+            watched=unavailable('wallet_source_unavailable')
+        engine.wallet_signals=watched
         if args.sol_only:
             result,fatal=cycle_result(engine,args.events)
         else:
             result,fatal=cycle_result(engine,args.events,lambda *_:tick_portfolio(engine))
+        from scan_markets import load_assets
+        try:
+            research_registry=load_assets()
+        except (OSError,ValueError,KeyError,TypeError):
+            research_registry=[]
+        result['wallet_watch']=live_context(watched,research_registry)
         # Credential-free persistent status survives terminal/session loss.
         record={'timestamp':int(time.time()),**result}
         (state_dir/'last_status.json').write_text(json.dumps(record))

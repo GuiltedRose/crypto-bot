@@ -18,7 +18,7 @@ class Rpc:
 
     def call(self, method, params):
         body = json.dumps(dict(jsonrpc='2.0', id=1, method=method, params=params)).encode()
-        request = urllib.request.Request(self.endpoint, data=body, headers={'Content-Type': 'application/json'})
+        request = urllib.request.Request(self.endpoint, data=body, headers={'Content-Type': 'application/json', 'Accept':'application/json', 'User-Agent':'SolanaSpotBot/0.1'})
         with urllib.request.urlopen(request, timeout=20) as response:
             result = json.load(response)
         if 'error' in result:

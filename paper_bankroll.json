@@ -1,0 +1,11 @@
+{
+  "reported_total_equity_usd": 6.5,
+  "reported_date": "2026-10-28",
+  "source": "user_reported_wallet_value_including_reclaimed_sol_rent",
+  "strategy_profit": false,
+  "eligible_trading_capital": true,
+  "native_sol": null,
+  "usdc": null,
+  "sol_price_usd": null,
+  "note": "Total wallet value, not USDC plus SOL. Verify native units, USDC and valuation before initializing a matching paper ledger. Reclaimed rent is not a strategy return or win."
+}

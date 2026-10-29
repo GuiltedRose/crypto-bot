@@ -59,6 +59,11 @@ def market_data(asset,now):
         else:
             policy=MatureMemePolicy() if asset['classification']=='mature_meme_candidate' else MatureMemePolicy(token_observed_days=90,min_liquidity_usd=100000,min_daily_volume_usd=10000)
             approved=policy.assess(asset,pool,json.loads(risk_path.read_text()),now)['passed']
+        if asset['classification']=='mature_meme_candidate':
+            from meme_evidence import load_meme_evidence
+            approved=approved and load_meme_evidence(asset['mint'],pool['pool'],now)['passed']
+            from candle_quality import assess_hourly
+            approved=approved and assess_hourly(asset,pool,bars,provenance['source_url'],provenance['retrieved_at'],now)['passed']
     return bars,approved
 
 
@@ -262,6 +267,8 @@ def tick_portfolio(engine):
         return {'status':recovery}
     now=int(time.time())
     assets=[a for a in load_assets() if a.get('approved_for_live',False)]
+    from wallet_signals import prioritize_assets
+    assets=prioritize_assets(assets,getattr(engine,'wallet_signals',{}))
     rpc,user=engine.adapter.rpc,engine.adapter.user
     # Read all ATA balances together. Standard SPL identity/state checks are
     # identical to the direct adapter; no cross-token quantity aggregation.

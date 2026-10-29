@@ -1,5 +1,42 @@
 # Solana spot trading bot
 
+The meme execution runner is now `run_meme_live.py`: Pump trend/pullback signals,
+locally built Pump/PumpSwap swaps, unsigned simulation by default, and an explicit
+user-operated signed mode. See [setup, limits and execution scope](MEME_TRADER.md#current-meme-execution-runner).
+The approved dollar limits are $1.78 per position, a $1 net profit trigger and
+$0.20 net loss trigger, with a 5% portfolio drawdown halt. The supplied profile uses market/candle evidence plus a bounded on-chain
+concentration and trade-clustering gate; full bundle coverage and independent
+human-buyer verification remain unavailable. No real-money run has been launched or profitability established.
+
+The following sections also describe the separate legacy runner and earlier
+paper work. They do not change the new runner's selected rules.
+
+
+Meme-trader conversion is in progress: see [MEME_TRADER.md](MEME_TRADER.md).
+Meme entries now also require fresh narrative, distribution/bundle and trading
+evidence. No collector supplies that evidence yet, so missing evidence blocks
+entries. Paper entries use a configurable 35–50% ATH pullback zone, with
+optional rebound confirmation and bankroll-based sizing. The persistent
+paper runner now reads Pump-owned price/candle/activity/ATH/holder feeds, with
+1-minute candles as the default. This change does
+not convert USDC or enable live meme/SOL execution. Reclaimed SOL rent counts
+as trading principal; SOL-funded paper trades are supported. The reported
+$6.50 bankroll is total equity including SOL, recorded in `paper_bankroll.json`.
+
+Paper trading now has a persistent runner with restart recovery, separate
+USDC/native-SOL accounting and archived resets. See the commands and input
+requirements in [MEME_TRADER.md](MEME_TRADER.md#persistent-paper-runner-restart-and-reset).
+Public observation mode records missing-proof blockers; it cannot establish
+bundle safety or human buying from metadata alone. Originality proof is no
+longer required; entries use upward-trend and candle-quality checks instead.
+Your eight supplied wallets in `paper_watchlist.json` now feed both paper and
+live through one shared, credential-free collector. Live uses fresh activity
+to prioritize already approved registry assets and reports unreviewed candidates;
+wallet activity never copies positions or bypasses approval/risk checks.
+The shared source also reads main-page Hot Callouts anonymously, keeping
+callout authors/posts separate from confirmed buys. Offline paper replay
+stays isolated from live data.
+
 Current execution: direct PumpSwap SOL/USDC spot and atomic Orca→PumpSwap
 SOL/USDC cycles. New Jupiter entries are blocked for the U.S. wallet after a
 terms review. The 24-token registry is an allowlist, not a claim that every
@@ -11,6 +48,13 @@ one open position. Five consecutive net-profitable confirmed round trips unlock
 two open position slots for the same strategy. No exchange login or KYC
 credential is used by the code.
 Direct execution does not establish legal eligibility for every service/token.
+
+The active $6.50 exploratory paper trial now tests trend/popularity followed
+by an early pullback, using `paper_trend_rules.json`. The earlier ATH-dip
+experiment is archived. It uses live Pump data and modeled
+fees, with safety evidence explicitly unqualified. Check actual fill counts in
+`state/paper_memes/report.json`; collection or rejection events are not trades.
+Details and limits are in [MEME_TRADER.md](MEME_TRADER.md#running-the-authorized-exploratory-paper-trial).
 
 ## Current implementation and observed status
 

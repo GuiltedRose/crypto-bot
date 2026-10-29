@@ -26,7 +26,14 @@ ATA = Pubkey.from_string('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL')
 SYSTEM = Pubkey.default()
 FEE_PROGRAM = Pubkey.from_string('pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ')
 DEFAULT_POOL = 'Gf7sXMoP8iRw4iiXmJ1nq4vxcRycbGXy5RL8a8LnTd3v'
-IDL = json.loads((Path(__file__).parent/'vendor/pump_amm.json').read_text())
+_idl_path=Path(__file__).parent/'vendor/pump_amm.json'
+_idl_raw=_idl_path.read_bytes()
+_idl_manifest=json.loads(_idl_path.with_name('pump_amm.manifest.json').read_text())
+if hashlib.sha256(_idl_raw).hexdigest()!=_idl_manifest['sha256']:
+    raise ValueError('Pinned PumpSwap specification hash mismatch')
+IDL=json.loads(_idl_raw)
+if IDL['address']!=str(PROGRAM):
+    raise ValueError('Pinned PumpSwap program identity mismatch')
 TYPES = {t['name']: t['type'] for t in IDL['types']}
 
 
