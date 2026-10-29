@@ -39,7 +39,7 @@ def assess_profiles(snapshot,now,base):
         assessments={name:{'action':signal['action'],'reasons':signal['reasons'],
             'reason':signal['reason'],'metrics':signal['metrics']} for name in ('current','moderate','aggressive')}
         return {'mint':snapshot.get('mint'),'pool':snapshot.get('pool'),'selected_profile':chosen,
-            'action':signal['action'],'reasons':signal['reasons'],'profiles':assessments,
+            'action':signal['action'],'reasons':signal['reasons'] or ([signal['reason']] if signal['action']=='watch' else []),'profiles':assessments,
             'recent_candle_range_fraction':span,'method':'volume_candles_regime_v1','learned_model':False,
             'scope':'Shared volume/candle entry rules; profile controls response cadence, not additional entry vetoes or larger stakes'}
     from meme_dip import entry_screen

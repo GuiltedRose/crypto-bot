@@ -18,7 +18,7 @@ def decision_context(snapshot,rules,scorecard=None):
     context['completed_candles']=[{key:row.get(key) for key in ('timestamp','open','high','low','close','volume_usd')}
         for row in history.get('candles',[])[-12:] if isinstance(row,dict)]
     context['scorecard']=scorecard
-    context['limits']={key:getattr(rules,key) for key in ('max_position_usd','take_profit_usd','max_loss_usd','slippage_per_side','drawdown_halt')}
+    context['limits']={key:getattr(rules,key) for key in ('position_fraction','take_profit_fraction','max_loss_fraction','max_position_usd','take_profit_usd','max_loss_usd','slippage_per_side','drawdown_halt')}
     context['recorded_before_order']=True
     return context
 

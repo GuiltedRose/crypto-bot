@@ -182,7 +182,7 @@ def startup_error(error):
     messages={
         'Another meme runner holds this state':'Another meme runner is active. Stop that process before restarting.',
         'Live state wallet/rules differ; use --adopt-rules only while flat with no unresolved orders':
-            'Saved wallet/rules differ from the configuration. For the 8-to-3 candle change, use --adopt-rules while flat with no unresolved orders. State was preserved.',
+            'Rule adoption blocked: saved wallet differs, a position is open, or an order is unresolved. Reconcile pending orders using the saved rules before adoption. State was preserved.',
         'Execution state mode mismatch':'This state directory belongs to another execution mode. Use separate unsigned and live state directories.',
         'Unbound unresolved orders require manual reconciliation':'An unresolved submitted order is missing its strategy binding. Reconcile it before trading; keep all state files.',
         '.env must be accessible only to its owner (chmod 600 .env)':'.env permissions are too broad. Run chmod 600 .env.',
@@ -201,6 +201,7 @@ def main():
     parser.add_argument('--wallet',help='Public wallet address for unsigned simulation; no private key needed')
     parser.add_argument('--rpc',default='https://api.mainnet-beta.solana.com')
     parser.add_argument('--risk-rpc',help='Optional HTTPS read-only RPC for indexed holder/trade queries; never receives signed transactions')
+    parser.add_argument('--reconcile-only',action='store_true',help='Check the original pending transaction once; never scan, sign or submit a new order')
     parser.add_argument('--adopt-rules',action='store_true',help='Explicitly adopt changed rules only when flat with no unresolved orders; preserves P&L and drawdown halt')
     parser.add_argument('--profile',choices=['current','moderate','aggressive','adaptive'],help='Shared entry-tolerance profile; dollar limits and slippage are unchanged')
     parser.add_argument('--rules',type=Path,default=Path('meme_live_rules.json'))
@@ -220,7 +221,7 @@ def main():
     from meme_profiles import selected
     base_rules=DipRules(**json.loads(args.rules.read_text()))
     rules=selected(base_rules,args.profile)
-    if rules.entry_style not in ('trend_pullback','volume_candles') or min(rules.max_position_usd,rules.take_profit_usd,rules.max_loss_usd)<=0:
+    if rules.entry_style not in ('trend_pullback','volume_candles') or min(rules.position_cap(1),*rules.exit_limits(1))<=0:
         parser.error('Live meme profile requires a supported entry policy and explicit dollar limits')
     os.umask(0o077)
     signer=orders=None
@@ -250,7 +251,7 @@ def main():
             fcntl.flock(global_lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
             orders=LiveOrders(rpc,str(directory/'orders.sqlite'))
         risk_assessor=None
-        if rules.entry_style!='volume_candles':
+        if rules.entry_style!='volume_candles' or rules.momentum_reclaim_enabled:
             from meme_onchain_risk import OnchainRisk
             risk_rpc=SimulationRpc(Rpc(args.risk_rpc)) if args.risk_rpc else SimulationRpc(rpc)
             if args.risk_rpc:
@@ -265,6 +266,9 @@ def main():
             print(json.dumps(record) if args.json else format_status(record,rules),flush=True)
         publish({'status':'started','strategy_profile':args.profile or 'configured','execution_enabled':args.execute,'position_open':store.state['position'] is not None,
                  'pending_order':store.state['pending'] is not None})
+        if args.reconcile_only:
+            publish(engine.recover())
+            return
         wallets=load_watchlist(args.watchlist)
         try: ensure_worker(args.watchlist,args.wallet_source_dir,args.rpc)
         except (OSError,ValueError): pass

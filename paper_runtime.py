@@ -109,8 +109,8 @@ class PaperSession:
     def adopt_entry_mode(self,rules):
         old=asdict(self.trader.rules);new=asdict(rules)
         changed={key for key in old if old[key]!=new[key]}
-        if old['entry_style']!='volume_candles' or new['entry_style']!='volume_candles' or changed-{'entry_profile_mode','drawdown_halt','drawdown_promotion_bankroll_usd','promoted_drawdown_halt','drawdown_bankroll_basis'}:
-            raise ValueError('Paper adoption may change only profile mode and the explicit drawdown threshold; other admission and financial rules must match')
+        if old['entry_style']!='volume_candles' or new['entry_style']!='volume_candles' or changed-{'momentum_reclaim_enabled','trend_pullback_max_fraction','position_fraction','take_profit_fraction','max_loss_fraction','entry_profile_mode','drawdown_halt','drawdown_promotion_bankroll_usd','promoted_drawdown_halt','drawdown_bankroll_basis'}:
+            raise ValueError('Paper adoption permits profile, reclaim entry policy, drawdown and percentage limits only; existing positions retain their frozen exits')
         candidate=decode_state(encode_state(self.trader));candidate.rules=rules
         with self.db:
             self.db.execute('INSERT INTO paper_events(run_id,fingerprint,observed,event,snapshot) VALUES(?,?,?,?,?)',

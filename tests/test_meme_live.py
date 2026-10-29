@@ -168,6 +168,16 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(result['intent']['input_units'],17800000)
         self.assertIsNone(self.store.state['position'])
         self.assertIsNone(self.store.state['pending'])
+    def test_percentage_input_and_frozen_intent_limits(self):
+        self.engine.rules=replace(self.rules,position_fraction=.274,take_profit_fraction=.562,max_loss_fraction=.112)
+        result=self.engine.prepare(self.row,100,6.5,1200)
+        self.assertEqual(result['status'],'unsigned_simulation_passed',result)
+        intent=result['intent']
+        self.assertAlmostEqual(intent['input_units']/1e9*100,1.781)
+        self.assertAlmostEqual(intent['take_profit_usd'],1.781*.562)
+        self.assertAlmostEqual(intent['max_loss_usd'],1.781*.112)
+        self.assertIsNone(self.store.state['position'])
+
     def test_halt_is_persistent_and_exits_take_priority_over_new_entries(self):
         self.engine.mark(6.5);self.store.state['realized_pnl_usd']=-.4;self.engine.mark(6.1)
         self.assertEqual(self.engine.prepare(self.row,100,6.1,1200)['status'],'drawdown_halted')
@@ -232,6 +242,13 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(self.engine.recover()['status'],'idle')
         self.store.close();self.store=MemeLiveStore(self.temp.name,self.user,self.rules)
         self.assertEqual(self.store.state['position']['units'],100)
+    def test_confirmed_buy_preserves_intent_exit_limits(self):
+        self.intent.update(take_profit_usd=.75,max_loss_usd=.15)
+        self.reserve();self.orders.db.execute("INSERT INTO orders VALUES('order','sig','confirmed')")
+        self.engine.recover()
+        self.assertEqual(self.store.state['position']['take_profit_usd'],.75)
+        self.assertEqual(self.store.state['position']['max_loss_usd'],.15)
+
     def test_ambiguous_send_blocks_replacement_orders_and_preserves_position(self):
         self.reserve();self.orders.db.execute("INSERT INTO orders VALUES('order','sig','uncertain')");self.orders.next_status='uncertain'
         self.assertEqual(self.engine.recover()['status'],'uncertain_order_blocks_replacement')

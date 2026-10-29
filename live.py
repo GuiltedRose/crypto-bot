@@ -10,6 +10,12 @@ import time
 import urllib.request
 
 
+class RpcError(RuntimeError):
+    def __init__(self,method,code):
+        super().__init__('RPC rejected '+method)
+        self.method,self.code=method,code
+
+
 class Rpc:
     def __init__(self, endpoint):
         if not endpoint.startswith('https://'):
@@ -22,7 +28,7 @@ class Rpc:
         with urllib.request.urlopen(request, timeout=20) as response:
             result = json.load(response)
         if 'error' in result:
-            raise RuntimeError('RPC rejected ' + method)
+            raise RpcError(method,result['error'].get('code'))
         return result['result']
 
 
@@ -59,6 +65,14 @@ class LiveOrders:
                 'preflightCommitment': 'confirmed', 'maxRetries': 0}])
             if returned != signature:
                 raise RuntimeError('Returned signature differs from locally signed transaction')
+        except RpcError as error:
+            # Preflight/signature verification rejection means this send did not
+            # forward the transaction. Transport failures remain ambiguous.
+            state='rejected' if error.method=='sendTransaction' and error.code in (-32002,-32003) else 'uncertain'
+            with self.db:
+                self.db.execute('UPDATE orders SET state=? WHERE order_id=?',(state,order_id))
+            if state=='rejected': return state
+            raise
         except Exception:
             with self.db:
                 self.db.execute("UPDATE orders SET state='uncertain' WHERE order_id=?", (order_id,))
@@ -70,7 +84,7 @@ class LiveOrders:
         if row is None:
             raise ValueError('Unknown order')
         signature, previous = row
-        if previous in ('confirmed', 'failed'):
+        if previous in ('confirmed', 'failed', 'rejected', 'expired_unfilled'):
             return previous
         result = self.rpc.call('getSignatureStatuses', [[signature], {'searchTransactionHistory': True}])
         status = result['value'][0]

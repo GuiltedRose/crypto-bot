@@ -35,6 +35,10 @@ class DipRules:
     max_wicky_bar_fraction: float = .34
     stop_fraction: float = .15
     target_r: float = 2
+    momentum_reclaim_enabled: bool = False
+    position_fraction: float = 0
+    take_profit_fraction: float = 0
+    max_loss_fraction: float = 0
     take_profit_usd: float = 0
     max_loss_usd: float = 0
     reserve_usd: float = 1
@@ -50,6 +54,9 @@ class DipRules:
     slippage_per_side: float = .005
 
     def __post_init__(self):
+        if type(self.momentum_reclaim_enabled) is not bool: raise ValueError("Momentum reclaim flag must be boolean")
+        if not 0 <= self.position_fraction <= 1 or not 0 <= self.max_loss_fraction < 1:
+            raise ValueError('Invalid position or loss fraction')
         if self.drawdown_bankroll_basis not in ('bot','total_for_demotion'): raise ValueError('Unknown bankroll promotion basis')
         if self.evidence_mode not in ('strict','market_only'):
             raise ValueError('Unknown paper evidence mode')
@@ -62,7 +69,7 @@ class DipRules:
         if not 0 < self.trend_pullback_min_fraction < self.trend_pullback_max_fraction < 1 or self.max_holding_seconds<=0 or not 0<self.max_liquidity_allocation_fraction<1:
             raise ValueError('Invalid trend entry settings')
         for key,value in asdict(self).items():
-            if key not in ('evidence_mode','entry_style','entry_profile_mode','drawdown_bankroll_basis'):
+            if key not in ('evidence_mode','entry_style','entry_profile_mode','drawdown_bankroll_basis','momentum_reclaim_enabled'):
                 number(value, 0)
         for value in (self.min_dip_fraction, self.max_dip_fraction, self.stop_fraction,
                       self.allocation_cap, self.intended_risk_fraction, self.drawdown_halt):
@@ -78,6 +85,14 @@ class DipRules:
             raise ValueError('Rebound must be zero (disabled) or less than one')
         if self.fee_per_side + self.slippage_per_side >= 1 or self.target_r <= 0:
             raise ValueError('Invalid costs or reward multiple')
+
+
+    def position_cap(self, bankroll):
+        return bankroll*self.position_fraction if self.position_fraction else (self.max_position_usd or bankroll*self.allocation_cap)
+
+    def exit_limits(self, notional):
+        return (notional*self.take_profit_fraction if self.take_profit_fraction else self.take_profit_usd,
+                notional*self.max_loss_fraction if self.max_loss_fraction else self.max_loss_usd)
 
 
 def reference_values(snapshot):
@@ -339,17 +354,22 @@ class PaperDipTrader:
             if self.native_sol < r.native_fee_reserve_sol+network*2+entry_rent+exit_rent:
                 return {'action': 'reject', 'reason': 'paper native fee reserve'}
             fixed = (network+(0 if refundable else (entry_rent+exit_rent)/2))*self.sol_price_usd
-        risk_available = max(0, (r.max_loss_usd if r.max_loss_usd>0 else equity*r.intended_risk_fraction)-fixed*2)
-        risk_rate = (0 if r.max_loss_usd>0 else r.stop_fraction)+2*(trade_fee+r.slippage_per_side)
+        cap=r.position_cap(equity)
+        _,loss_limit=r.exit_limits(cap)
+        risk_available = max(0, (loss_limit if loss_limit>0 else equity*r.intended_risk_fraction)-fixed*2)
+        risk_rate = (0 if loss_limit>0 else r.stop_fraction)+2*(trade_fee+r.slippage_per_side)
         risk_rate=max(risk_rate,1e-15)
         available=self.cash-r.reserve_usd
         if quote_mint==SOL_MINT:
             available=min(equity-r.reserve_usd,(self.native_sol-r.native_fee_reserve_sol-network*2-entry_rent-exit_rent)*self.sol_price_usd)
-        budget = max(0, min(available, r.max_position_usd if r.max_position_usd>0 else equity*r.allocation_cap,
+        budget = max(0, min(available, cap,
                            risk_available/risk_rate))
         if r.entry_style=='trend_pullback':
             budget=min(budget,snapshot['liquidity_usd']*r.max_liquidity_allocation_fraction)
-        target_gain = r.take_profit_usd if r.take_profit_usd>0 else budget*r.stop_fraction*r.target_r
+        profit_target,loss_limit=r.exit_limits(budget)
+        target_gain = profit_target if profit_target>0 else budget*r.stop_fraction*r.target_r
+        if r.max_loss_fraction and fixed*2+budget*2*(trade_fee+r.slippage_per_side)>=loss_limit:
+            return {"action":"reject","reason":"paper estimated costs exceed loss budget"}
         round_trip_cost = fixed*2+budget*2*(trade_fee+r.slippage_per_side)
         if budget <= fixed or target_gain < 1.5*round_trip_cost:
             return {'action': 'reject', 'reason': 'paper allocation cannot cover modeled costs'}
@@ -366,7 +386,7 @@ class PaperDipTrader:
             self.cash -= budget
         self.position = {'mint': mint, 'pool': pool, 'entry_profile':profile_name,'quantity': quantity, 'entry_price': fill_price,
                          'stop': fill_price*(1-r.stop_fraction), 'target': fill_price*(1+r.stop_fraction*r.target_r),
-                         'cash_spent': budget,'entry_fee_per_side':trade_fee,'take_profit_usd':r.take_profit_usd,'max_loss_usd':r.max_loss_usd,'entry_style':r.entry_style,'opened_at':now, 'quote_mint':quote_mint,'exit_fixed_cost': cash_fixed,
+                         'cash_spent': budget,'entry_fee_per_side':trade_fee,'take_profit_usd':profit_target,'max_loss_usd':loss_limit,'entry_style':r.entry_style,'opened_at':now, 'quote_mint':quote_mint,'exit_fixed_cost': cash_fixed,
                          'rent_is_refundable':self.native_sol is not None and refundable,
                          'token_program':snapshot.get('token_program','standard_spl_assumed'),
                          'entry_native_cost_usd': 0 if self.native_sol is None else (network+(0 if refundable else entry_rent))*self.sol_price_usd}
@@ -374,10 +394,10 @@ class PaperDipTrader:
         if self.native_sol is not None:
             exit_costs+=(network+(0 if refundable else exit_rent))*self.sol_price_usd
         coefficient=quantity*(1-r.slippage_per_side)*(1-trade_fee)
-        if r.take_profit_usd>0:
-            self.position['target']=(budget+exit_costs+r.take_profit_usd)/coefficient
-        if r.max_loss_usd>0:
-            self.position['stop']=max(0,(budget+exit_costs-r.max_loss_usd)/coefficient)
+        if profit_target>0:
+            self.position['target']=(budget+exit_costs+profit_target)/coefficient
+        if loss_limit>0:
+            self.position['stop']=max(0,(budget+exit_costs-loss_limit)/coefficient)
         self.armed.pop(key, None)
         if r.entry_style in ('trend_pullback','volume_candles'):
             self.last_entry_bars[key]=signal_bar

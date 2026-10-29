@@ -38,6 +38,41 @@ def assess_volume_candles(snapshot,now,rules):
         if bars and not 0<=now-(bars[-1]['timestamp']+60)<=120: reasons.append('stale completed candles')
         number(snapshot['price_usd'],1e-15)
     except (KeyError,TypeError,ValueError,AttributeError): reasons.append('required volume/candle data unavailable or invalid')
+    if not reasons and rules.momentum_reclaim_enabled:
+        return assess_reclaim(snapshot,bars,rules)
     return {'action':'reject' if reasons else 'buy','reasons':list(dict.fromkeys(reasons)),
             'reason':'buy volume and completed-candle minimums met' if not reasons else None,
             'metrics':{'completed_bars':len(bars) if isinstance(bars,list) else 0,'minimum_buy_volume_usd':rules.min_buy_volume_usd}}
+
+
+def assess_reclaim(snapshot,bars,rules):
+    """Short-window impulse/pullback/reclaim hypothesis, using closed bars only."""
+    def watch(reason,**metrics):
+        return {'action':'watch','reasons':[], 'reason':reason,'metrics':metrics}
+    if len(bars)<3: return watch('need impulse, pullback and reclaim candles')
+    # Reserve the final two completed candles for pullback and confirmation.
+    impulse=bars[:-2];dip,reclaim=bars[-2:]
+    if any(b['timestamp']-a['timestamp']!=60 for a,b in zip(bars,bars[1:])):
+        return watch('waiting for contiguous momentum candles')
+    peak=max(b['high'] for b in impulse)
+    gain=impulse[-1]['close']/impulse[0]['open']-1
+    if gain<rules.trend_min_gain_fraction or impulse[-1]['close']<=impulse[0]['open']:
+        return watch('waiting for an upward impulse')
+    depth=1-dip['low']/peak
+    if dip['close']>=dip['open'] or dip['low']>=impulse[-1]['low'] and dip['close']>=impulse[-1]['close']:
+        return watch('waiting for a completed pullback')
+    if not rules.trend_pullback_min_fraction<=depth<=rules.trend_pullback_max_fraction:
+        return watch('pullback outside the configured setup range',pullback_fraction=depth)
+    if reclaim['low']<dip['low']:
+        return watch('pullback low broke; setup invalidated')
+    if reclaim['close']<=dip['high'] or reclaim['close']<=reclaim['open']:
+        return watch('waiting for a completed reclaim above pullback high')
+    if reclaim['volume_usd']<dip['volume_usd'] or reclaim['volume_usd']<=0:
+        return watch('reclaim lacks renewed trading activity')
+    price=snapshot['price_usd']
+    if price<dip['high'] or price>reclaim['close']*(1+rules.slippage_per_side):
+        return watch('reclaim lost or entry already moved; do not chase')
+    return {'action':'buy','reasons':[],'reason':'upward impulse, pullback and volume-backed reclaim',
+            'metrics':{'peak_price':peak,'pullback_low':dip['low'],'pullback_fraction':depth,
+                       'runup_gain_fraction':gain,'completed_bars':len(bars),
+                       'human_buyers_verified':False}}

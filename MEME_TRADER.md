@@ -1,5 +1,23 @@
 # Meme trader conversion
 
+Active entry correction: `momentum_reclaim_enabled: true` requires an upward
+impulse, a 2–50% pullback, and a completed bullish reclaim above the pullback
+candle high with renewed candle volume. Broken lows, missing intervals and
+chased quotes remain WATCH. The $5,000 minimum and position/exit controls stay.
+Live entries also require the bounded on-chain concentration/activity check;
+this cannot certify human buyers or absence of manipulation. Paper models the
+same candle setup but does not certify these live on-chain checks. Earlier
+volume-only policy descriptions below are historical.
+
+Current percentage limits for new entries: `position_fraction: 0.274` (27.4% of bankroll),
+`take_profit_fraction: 0.562` (56.2% net profit on input), and
+`max_loss_fraction: 0.112` (11.2% net loss on input). At $6.50 these approximate
+$1.78 input, $1 profit and $0.20 loss. Reserves and execution checks still apply.
+Each position freezes its dollar exits at entry; existing positions keep their
+original exits. Legacy dollar settings are fallbacks only when a fraction is zero.
+Restart with `--adopt-rules` when flat to adopt changed live rules. Older dollar
+examples below describe the previous configuration.
+
 ## Current meme execution runner
 
 ### Current minimal entry policy (supersedes profile/dip notes below)

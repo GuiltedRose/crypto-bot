@@ -13,7 +13,7 @@ import sqlite3
 import time
 import uuid
 from meme_dip import DipRules, entry_screen, SOL_MINT
-from meme_execution import MemeAdapter, associated, TOKEN, WSOL
+from meme_execution import MemeAdapter, associated, TOKEN, WSOL, token_balance
 from solders.pubkey import Pubkey
 
 
@@ -127,6 +127,60 @@ class MemeLiveEngine:
             total_bankroll=equity if self.rules.drawdown_bankroll_basis=='total_for_demotion' else None,
             total_complete=getattr(self,'bankroll_valuation',{}).get('complete',True))
 
+    def resolve_expired(self,p,signature):
+        """Release only expired buys with unchanged finalized pre-send inventory.
+
+        Incomplete legacy wallet history, any balance change, receipt, RPC failure or
+        observed status keep replacement blocked. Never resend signed bytes.
+        """
+        baseline=p.get('pre_inventory')
+        if p['side']!='buy' or not p.get('last_valid_block_height'):
+            return 'uncertain'
+        height=self.rpc.call('getBlockHeight',[{'commitment':'finalized'}])
+        if height<=p['last_valid_block_height']: return 'uncertain'
+        result=self.rpc.call('getSignatureStatuses',[[signature],{'searchTransactionHistory':True}])
+        if result['value'][0] is not None: return 'uncertain'
+        receipt=self.rpc.call('getTransaction',[signature,{'encoding':'json','commitment':'finalized','maxSupportedTransactionVersion':0}])
+        if receipt is not None: return 'uncertain'
+        if baseline is None:
+            if not self.absent_from_wallet_history(p,signature,result['context']['slot']): return 'uncertain'
+            with self.orders.db:
+                self.orders.db.execute("UPDATE orders SET state='expired_unfilled' WHERE order_id=? AND state='uncertain'",(p['id'],))
+            return 'expired_unfilled'
+        accounts=self.rpc.call('getMultipleAccounts',[[self.user,p['base_account'],p['quote_account']],
+            {'encoding':'base64','commitment':'finalized','minContextSlot':result['context']['slot']}])['value']
+        if len(accounts)!=3 or accounts[0] is None: return 'uncertain'
+        current={'native_lamports':accounts[0]['lamports'],
+                 'base_balance':token_balance(accounts[1],Pubkey.from_string(p['mint']),Pubkey.from_string(self.user),Pubkey.from_string(p['token_program'])),
+                 'quote_balance':token_balance(accounts[2],WSOL,Pubkey.from_string(self.user),TOKEN)}
+        if current!=baseline: return 'uncertain'
+        with self.orders.db:
+            self.orders.db.execute("UPDATE orders SET state='expired_unfilled' WHERE order_id=? AND state='uncertain'",(p['id'],))
+        return 'expired_unfilled'
+
+    def absent_from_wallet_history(self,p,signature,context_slot):
+        """Bounded finalized wallet scan spanning the original submission time."""
+        row=self.orders.db.execute('SELECT created FROM orders WHERE order_id=?',(p['id'],)).fetchone()
+        if not row or not isinstance(row[0],(int,float)): return False
+        cutoff=row[0]-120
+        before=None;seen=set()
+        for _ in range(5):
+            options={'commitment':'finalized','limit':100,'minContextSlot':context_slot}
+            if before: options['before']=before
+            rows=self.rpc.call('getSignaturesForAddress',[self.user,options])
+            if not isinstance(rows,list) or not rows: return False
+            for item in rows:
+                sig=item.get('signature');stamp=item.get('blockTime');slot=item.get('slot')
+                if sig==signature: return False
+                if not sig or sig in seen or type(stamp) is not int or type(slot) is not int: return False
+                seen.add(sig)
+            # Require actual history older than submission, not an empty page.
+            if rows[-1]['blockTime']<=cutoff:
+                first=self.rpc.call('getFirstAvailableBlock',[])
+                return type(first) is int and first<=rows[-1]['slot']
+            before=rows[-1]['signature']
+        return False
+
     def recover(self):
         s=self.store.state;p=s['pending']
         if not p: return {'status':'idle'}
@@ -138,6 +192,12 @@ class MemeLiveEngine:
             s['pending']=None;self.store.save('unsent_intent_released',{'id':p['id']})
             return {'status':'unsent_intent_released'}
         status=self.orders.reconcile(p['id'])
+        if status=='uncertain':
+            status=self.resolve_expired(p,row[0])
+        if status in ('rejected','expired_unfilled'):
+            s['pending']=None
+            self.store.save('order_'+status,{'id':p['id'],'signature':row[0],'pnl_usd':0})
+            return {'status':'order_'+status,'signature':row[0]}
         if status=='uncertain': return {'status':'uncertain_order_blocks_replacement','signature':row[0]}
         tx=self.rpc.call('getTransaction',[row[0],{'encoding':'json','commitment':'confirmed','maxSupportedTransactionVersion':0}])
         if tx is None: return {'status':'waiting_for_confirmed_receipt','signature':row[0]}
@@ -153,7 +213,8 @@ class MemeLiveEngine:
                 raise ValueError('Confirmed buy violates intent; manual reconciliation required')
             s['position']=dict(entry_profile=p.get('entry_profile'),mint=p['mint'],pool=p['pool'],kind=p['kind'],units=fill['base_delta'],
                 opened_at=tx.get('blockTime') or time.time(),cost_usd=-fill['net_cash_lamports']/1e9*p['sol_price_usd'],
-                base_account=p['base_account'],quote_account=p['quote_account'],entry_signature=row[0])
+                base_account=p['base_account'],quote_account=p['quote_account'],entry_signature=row[0],
+                take_profit_usd=p.get('take_profit_usd',self.rules.take_profit_usd),max_loss_usd=p.get('max_loss_usd',self.rules.max_loss_usd))
             with self.store.db:
                 self.store.db.execute('INSERT OR REPLACE INTO bars VALUES(?,?,?)',(p['mint'],p['pool'],p['bar']))
         else:
@@ -219,20 +280,24 @@ class MemeLiveEngine:
             units=position['units'];out=adapter.output('sell',units,market)
             net=(out*(1-self.rules.slippage_per_side))/1e9*sol_price-.00002*sol_price-position['cost_usd']
             self.mark(equity,net)
-            reason=('bot strategy drawdown' if s['halted'] else 'loss trigger' if net<=-self.rules.max_loss_usd else
-                    'profit target' if net>=self.rules.take_profit_usd else 'time limit' if now-position['opened_at']>=self.rules.max_holding_seconds else None)
+            profit_target=position.get('take_profit_usd',self.rules.take_profit_usd)
+            loss_limit=position.get('max_loss_usd',self.rules.max_loss_usd)
+            reason=('bot strategy drawdown' if s['halted'] else 'loss trigger' if net<=-loss_limit else
+                    'profit target' if net>=profit_target else 'time limit' if now-position['opened_at']>=self.rules.max_holding_seconds else None)
             if reason is None: return {'status':'holding','estimated_net_pnl_usd':net}
         else:
             # Preserve the explicit dollar reserve and native exit reserve.
             available=(market['native_lamports']+market.get('quote_balance',0)-int(self.rules.native_fee_reserve_sol*1e9)-5040000)/1e9*sol_price-self.rules.reserve_usd
-            budget=min(self.rules.max_position_usd,available)
+            budget=min(self.rules.position_cap(equity),available)
             if self.rules.entry_style!='volume_candles': budget=min(budget,snapshot['liquidity_usd']*self.rules.max_liquidity_allocation_fraction)
             if budget<=0: return {'status':'insufficient_spendable_SOL_after_reserves'}
             units=int(budget/sol_price*1e9);reason='volume and candle minimums' if self.rules.entry_style=='volume_candles' else 'trend pullback'
             if units<=0: return {'status':'position_rounds_to_zero'}
+        if side=='buy' and self.rules.momentum_reclaim_enabled and self.risk_assessor is None:
+            return {'status':'onchain_risk_unavailable'}
         risk_report=None
         if side=='buy':
-            if self.risk_assessor and self.rules.entry_style!='volume_candles':
+            if self.risk_assessor and (self.rules.entry_style!='volume_candles' or self.rules.momentum_reclaim_enabled):
                 risk=self.risk_assessor.assess(adapter,market)
                 risk_report=risk
                 self.store.save('onchain_entry_risk',risk)
@@ -246,20 +311,21 @@ class MemeLiveEngine:
             available=(market['native_lamports']+market.get('quote_balance',0)-int(self.rules.native_fee_reserve_sol*1e9)-5040000)/1e9*sol_price-self.rules.reserve_usd
             units=min(units,int(max(0,available)/sol_price*1e9))
             if units<=0: return {'status':'inventory_changed_after_reverse_probe'}
+        if side=='buy': profit_target,loss_limit=self.rules.exit_limits(units/1e9*sol_price)
         unsigned,context=adapter.build(side,units,snapshot=market)
         simulated=adapter.simulate(unsigned,context,reserve=int(self.rules.native_fee_reserve_sol*1e9))
         if side=='sell' and reason=='profit target':
             net_minimum=(context['min_output']-simulated['fee_lamports']-simulated['rent_lamports']+simulated.get('recoverable_rent_lamports',0))/1e9*sol_price-position['cost_usd']
-            if net_minimum<self.rules.take_profit_usd:
+            if net_minimum<profit_target:
                 return {'status':'holding','reason':'net minimum proceeds have not reached profit target','estimated_net_pnl_usd':net_minimum}
         if side=='buy':
             setup=(simulated['rent_lamports']-simulated.get('recoverable_rent_lamports',0))/1e9*sol_price
             round_trip=(2*simulated['fee_lamports']/1e9*sol_price+units/1e9*sol_price*2*(market['fee_bps']/10000+self.rules.slippage_per_side))
-            if round_trip+setup>=self.rules.max_loss_usd: return {'status':'estimated_costs_exceed_loss_budget'}
+            if round_trip+setup>=loss_limit: return {'status':'estimated_costs_exceed_loss_budget'}
         from meme_learning import decision_context
         context_record=decision_context(snapshot,self.rules,assessment if side=='buy' else None)
         intent=dict(id=str(uuid.uuid4()),side=side,mint=snapshot['mint'],pool=snapshot['pool'],kind=snapshot['market_kind'],
-            entry_context=context_record,onchain_risk=risk_report,entry_profile=profile_name,input_units=units,minimum=context['min_output'],sol_price_usd=sol_price,bar=bar,reason=reason,
+            take_profit_usd=profit_target,max_loss_usd=loss_limit,entry_context=context_record,onchain_risk=risk_report,entry_profile=profile_name,input_units=units,minimum=context['min_output'],sol_price_usd=sol_price,bar=bar,reason=reason,
             base_account=str(market['base_user']),quote_account=str(market['quote_user']),simulation=simulated,
             message_hash=context['message_hash'],last_valid_block_height=context['last_valid_block_height'])
         if not self.execute:
@@ -273,6 +339,8 @@ class MemeLiveEngine:
         if hashlib.sha256(to_bytes_versioned(unsigned.message)).hexdigest()!=context['message_hash']:
             raise ValueError('Message changed after simulation')
         if time.time()-market['read_at']>20: raise ValueError('Quote expired before signing')
+        intent['pre_inventory']={key:market[key] for key in ('native_lamports','base_balance','quote_balance')}
+        intent['token_program']=str(market['token_program'])
         s['pending']=intent;self.store.save('reserved',intent)
         signed=VersionedTransaction(unsigned.message,[self.signer])
         self.orders.submit(intent['id'],str(signed.signatures[0]),bytes(signed))

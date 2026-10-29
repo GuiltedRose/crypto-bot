@@ -16,5 +16,10 @@
   "buy_window_seconds": 3600,
   "drawdown_promotion_bankroll_usd": 1000,
   "promoted_drawdown_halt": 0.3,
-  "drawdown_bankroll_basis": "total_for_demotion"
+  "drawdown_bankroll_basis": "total_for_demotion",
+  "position_fraction": 0.274,
+  "take_profit_fraction": 0.562,
+  "max_loss_fraction": 0.112,
+  "momentum_reclaim_enabled": true,
+  "trend_pullback_max_fraction": 0.5
 }
