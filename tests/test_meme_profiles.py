@@ -54,3 +54,25 @@ class ProjectProfileTests(unittest.TestCase):
         row=observation();row['candle_history']['candles']=row['candle_history']['candles'][-2:]
         result=assess_profiles(row,1200,self.rules)
         self.assertIsNone(result['selected_profile'])
+
+    def test_waiting_for_pullback_preserves_momentum_scorecard_before_selection(self):
+        from test_trend_pullback import snapshot
+        from meme_watchlist import token_analysis
+        from meme_console import format_status
+        row=snapshot((.50,.52,.54,.56,.58,.60,.62,.64,.65,.66))
+        row.update(sell_volume_usd=1000,market_kind='bonding_curve')
+        with tempfile.TemporaryDirectory() as root:
+            store=MemeLiveStore(root,'user',self.rules)
+            try:
+                engine=MemeLiveEngine({},'user',store,self.rules,adapter_factory=FakeAdapter)
+                result=engine.prepare(row,100,6.5,1200)
+                self.assertEqual(result['status'],'watch',result)
+                self.assertIsNone(result['profile_selection']['selected_profile'])
+                self.assertIn('scorecard',result)
+                analysis=token_analysis(row,result,self.rules,1200)
+                self.assertEqual(analysis['momentum'],'Strong')
+                text=format_status(dict(analysis,timestamp=1200,mode='live'))
+                self.assertIn('Not selected — waiting',text)
+                self.assertNotIn('None qualifying',text)
+                for name in ['Current profile','Moderate profile','Aggressive profile']: self.assertIn(name,text)
+            finally: store.close()

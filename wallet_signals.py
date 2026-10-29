@@ -46,6 +46,10 @@ def read_signals(wallets, directory=DEFAULT_DIRECTORY, now=None):
         stamp = report['published_at']
         if isinstance(stamp, bool) or not isinstance(stamp, (int, float)) or not 0 <= now-stamp <= 120:
             return unavailable('stale_wallet_source')
+        from pump_leaderboard import effective_wallets,eligible_leaderboard_wallets
+        pinned=list(wallets)
+        leaders=eligible_leaderboard_wallets(report.get('leaderboard_wallets',[]),now)
+        wallets=effective_wallets(pinned,leaders,now)
         checks = report['wallet_checks']
         signals = []
         seen = set()
@@ -65,14 +69,16 @@ def read_signals(wallets, directory=DEFAULT_DIRECTORY, now=None):
                     or type(checked_at) not in (int, float) or not 0 <= now-checked_at <= 300
                     or type(stamp) not in (int, float) or not 0 <= now-stamp <= 300):
                     continue
-                observations[wallet] = observation
+                observations[wallet] = dict(observation,wallet_origin='pinned' if wallet in pinned else 'leaderboard')
             if observations:
                 signals.append({'mint': mint, 'watched_buyers': len(observations),
                                 'observations': list(observations.values()), 'independent_human_verified': False})
         from pump_callouts import eligible_callouts
         callouts=eligible_callouts(report.get('callouts',[]),now,wallets)
-        candidates={g['mint'] for g in signals}|{row['mint'] for row in callouts}
-        return dict(report, signals=signals, callouts=callouts, candidate_mints=sorted(candidates),
+        from pump_hot_tokens import eligible_hot_tokens
+        hot=eligible_hot_tokens(report.get('hot_tokens',[]),now)
+        candidates={g['mint'] for g in signals}|{row['mint'] for row in callouts}|{row['mint'] for row in hot}
+        return dict(report, signals=signals, callouts=callouts, hot_tokens=hot, leaderboard_wallets=leaders, effective_wallet_count=len(wallets),candidate_mints=sorted(candidates),
                     automatic_trade_approval=False, independent_human_verified=False)
     except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError):
         return unavailable('wallet_source_unavailable')
@@ -88,8 +94,9 @@ def rank_candidate_mints(report):
         if row.get('watched_author'):
             watched.setdefault(mint,set()).add(row['author_wallet'])
         views[mint]=views.get(mint,0)+(row.get('views') or 0)
-    return sorted(report.get('candidate_mints',[]),key=lambda mint:(-buys.get(mint,0),
-                  -len(watched.get(mint,())),-len(authors.get(mint,())),-views.get(mint,0),mint))
+    hot={row['mint']:row['rank'] for row in report.get('hot_tokens',[])}
+    return sorted(report.get('candidate_mints',[]),key=lambda mint:(-int(mint in hot and buys.get(mint,0)>0),-buys.get(mint,0),
+                  -len(watched.get(mint,())),-int(mint in hot),-len(authors.get(mint,())),-views.get(mint,0),hot.get(mint,201),mint))
 
 
 def prioritize_assets(assets, report):
@@ -146,21 +153,41 @@ class SharedWalletFeed:
         return read_signals(wallets,self.directory)
 
 
-def collect_once(watcher, wallets, directory, now=None, callout_source=None):
+def collect_once(watcher, wallets, directory, now=None, callout_source=None, hot_source=None, leaderboard_source=None):
     from paper_sources import source_error
+    from pump_leaderboard import effective_wallets
+    leaderboard_report={}
+    leaders=[]
+    if leaderboard_source is not None:
+        try:
+            leaderboard_report=leaderboard_source.poll(now=now)
+            leaders=leaderboard_report['leaderboard_wallets']
+        except Exception as error: leaderboard_report=source_error(error)
+    effective=effective_wallets(wallets,leaders,time.time() if now is None else now)
     try:
-        report = watcher.poll(wallets, now=now)
+        report = watcher.poll(effective, now=now)
     except Exception as error:
         report = dict(unavailable('incomplete'), wallet_checks={}, errors={'collector': source_error(error)})
     if callout_source is not None:
         try:
-            social=callout_source.poll(wallets,now=now)
+            social=callout_source.poll(effective,now=now)
             report['callouts']=social.pop('callouts')
             report['callout_source']=social
         except Exception as error:
             report['callouts']=[]
             report['callout_source']=source_error(error)
             report.setdefault('errors',{})['callouts']=source_error(error)
+    if hot_source is not None:
+        try:
+            hot=hot_source.poll(now=now)
+            report['hot_tokens']=hot['hot_tokens']
+            report['hot_token_source']={k:v for k,v in hot.items() if k!='hot_tokens'}
+        except Exception as error:
+            report['hot_tokens']=[]
+            report['hot_token_source']=source_error(error)
+    report['leaderboard_wallets']=leaders
+    report['leaderboard_source']=leaderboard_report
+    report['effective_wallet_count']=len(effective)
     report.update(schema=1, watchlist_digest=digest(wallets), published_at=time.time() if now is None else now)
     directory = Path(directory)
     temporary = directory/'status.tmp'
@@ -203,10 +230,14 @@ def main():
         watcher = WalletWatcher(args.state_dir/'wallet_watch.sqlite', PublicRpc(args.rpc))
         from pump_callouts import HotCallouts
         social=HotCallouts(args.state_dir/'callouts.sqlite')
+        from pump_hot_tokens import HotTokens
+        hot=HotTokens()
+        from pump_leaderboard import Leaderboard
+        leaderboard=Leaderboard()
         try:
             while True:
                 wallets = load_watchlist(args.watchlist)
-                report = collect_once(watcher, wallets, args.state_dir,callout_source=social)
+                report = collect_once(watcher, wallets, args.state_dir,callout_source=social,hot_source=hot,leaderboard_source=leaderboard)
                 print(json.dumps({'status': report['status'], 'candidate_mints': report['candidate_mints']}), flush=True)
                 if not args.loop:
                     return 0

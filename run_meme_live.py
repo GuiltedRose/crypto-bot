@@ -111,7 +111,8 @@ def tick(engine,sources,feed,wallets,mints,discover=True,progress=None):
         try:
             row=sources.observation(mint)
             fresh=feed.read_context(wallets)
-            row['research_context']={'source_status':fresh.get('status','unknown'),'callouts':[r for r in fresh.get('callouts',[]) if r['mint']==mint],
+            row['research_context']={'source_status':fresh.get('status','unknown'),'hot_tokens':[r for r in fresh.get('hot_tokens',[]) if r['mint']==mint],
+                'hot_token_source':fresh.get('hot_token_source',{}),'callouts':[r for r in fresh.get('callouts',[]) if r['mint']==mint],
                 'wallet_signals':[r for r in fresh.get('signals',[]) if r['mint']==mint]}
             # Fetch a fresh valuation after potentially slow market requests.
             current_price=valuation(sources)

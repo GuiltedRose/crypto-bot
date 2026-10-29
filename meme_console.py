@@ -92,8 +92,16 @@ def analysis_summary(record):
         line('Social activity',f"{record.get('fresh_callouts',0)} fresh callouts / {record.get('fresh_authors',0)} authors"),line('Liquidity',record.get('liquidity','Unknown')),
         line('On-chain risk',record.get('onchain_risk','Not checked yet')),'',line('Strategy',record.get('strategy','Unknown')),
         line('Decision',record.get('decision','Unknown')),line('Reason',record.get('reason','Unknown'))]
+    if record.get('hot_board'):
+        lines.insert(3,line('Hot board',f"{record['hot_board'].capitalize()} #{record.get('hot_rank','?')}"))
+        lines.insert(4,line('Watched-buy overlap','YES — supporting signal' if record.get('hot_watched_overlap') else 'No fresh overlap observed'))
     selection=record.get('profile_selection')
-    if selection: lines.append(line('Entry profile',selection.get('selected_profile') or 'None qualifying'))
+    if selection:
+        selected=selection.get('selected_profile')
+        pending=any(p.get('action')=='watch' for p in selection.get('profiles',{}).values())
+        lines.append(line('Entry profile',selected.capitalize() if selected else 'Not selected — waiting' if pending else 'No eligible entry profile'))
+        for name,assessment in selection.get('profiles',{}).items():
+            lines.append(line(name.capitalize()+' profile',assessment.get('action','unknown').upper()))
     elif record.get('entry_profile'): lines.append(line('Entry profile',record['entry_profile']))
     if record.get('watchlist',{}).get('retained'):
         lines.append(line('Watchlist',f"Retained; revisit after {record['watchlist']['revisit_after_seconds']}s"))

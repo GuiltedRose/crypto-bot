@@ -61,7 +61,9 @@ def markets_once(session, sources, mints, discover=False, narrative_store=None, 
             context=watcher.read_context(wallets) if watcher and wallets and hasattr(watcher,'read_context') else watch_report
             snapshot = sources.observation(mint, pool=pool)
             if context:
-                snapshot['research_context']={'wallet_signals':[group for group in context.get('signals',[]) if group['mint']==mint],
+                snapshot['research_context']={'source_status':context.get('status','unknown'),
+                                              'hot_tokens':[r for r in context.get('hot_tokens',[]) if r['mint']==mint],
+                                              'hot_token_source':context.get('hot_token_source',{}),'wallet_signals':[group for group in context.get('signals',[]) if group['mint']==mint],
                                               'callouts':[row for row in context.get('callouts',[]) if row['mint']==mint]}
             if session.process(snapshot) is not None:
                 processed += 1

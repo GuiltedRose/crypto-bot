@@ -42,7 +42,7 @@ class PublicSources:
         if self.override_fetch:
             return self.override_fetch(url)
         parsed = urlparse(url)
-        if parsed.scheme != 'https' or parsed.netloc not in ('api.geckoterminal.com', 'frontend-api-v3.pump.fun', 'swap-api.pump.fun'):
+        if parsed.scheme != 'https' or parsed.netloc not in ('api.geckoterminal.com', 'frontend-api-v3.pump.fun', 'swap-api.pump.fun', 'advanced-indexer.pump.fun'):
             raise ValueError('Unreviewed paper data host')
         remaining = self.cooldown_until.get(parsed.netloc, 0)-time.monotonic()
         if remaining > 0:

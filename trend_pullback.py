@@ -29,9 +29,12 @@ def social_interest(snapshot,now,rules):
                     wallets.add(row['wallet'])
             except (KeyError,ValueError,TypeError):
                 continue
+    from pump_hot_tokens import eligible_hot_tokens
+    hot=[r for r in eligible_hot_tokens(context.get('hot_tokens',[]),now) if r['mint']==snapshot['mint']]
     return {'present':bool(wallets or watched or authors and views>=rules.social_min_views),
             'callout_authors':len(authors),'reported_views':views,'watched_buy_wallets':len(wallets),
-            'independent_human_verified':False}
+            'hot_board':hot[0]['board'] if hot else None,'hot_rank':hot[0]['rank'] if hot else None,
+            'hot_watched_overlap':bool(hot and wallets),'independent_human_verified':False}
 
 
 def assess_trend_pullback(snapshot,now,rules,require_social=True):

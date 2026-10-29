@@ -68,7 +68,7 @@ def token_analysis(snapshot,result,rules,now):
     groups=result.get('scorecard',{}).get('groups',{})
     price=groups.get('price_structure',{});metrics=price.get('metrics',{})
     momentum=('Strong' if metrics.get('runup_gain_fraction',0)>=rules.trend_min_gain_fraction else
-              'Developing' if price.get('score')==.5 else 'Not established')
+              'Developing' if price.get('score')==.5 else 'Unavailable' if price.get('score') is None else 'Not established')
     volume=snapshot.get('buy_volume_usd')
     buy_volume=f'${volume:,.0f} over {snapshot.get("buy_volume_window_seconds",0)/60:g}m' if type(volume) in (int,float) else 'Unavailable'
     depth=groups.get('market_depth',{})
@@ -90,7 +90,8 @@ def token_analysis(snapshot,result,rules,now):
                 ids.add(post['id'])
         except (KeyError,TypeError): pass
     return {'status':'token_analysis','mint':snapshot.get('mint'),'symbol':snapshot.get('symbol'),
-            'momentum':momentum,'buy_volume':buy_volume,'watched_buyers':interest['watched_buy_wallets'],
+            'hot_board':interest.get('hot_board'),'hot_rank':interest.get('hot_rank'),
+            'hot_watched_overlap':interest.get('hot_watched_overlap',False),'momentum':momentum,'buy_volume':buy_volume,'watched_buyers':interest['watched_buy_wallets'],
             'fresh_callouts':len(ids),'fresh_authors':interest['callout_authors'],'social_source_status':context.get('source_status','unknown'),
             'liquidity':liquidity,'onchain_risk':risk_label,'strategy':'Trend Pullback','decision':decision,'reason':reason,
             'profile_selection':result.get('profile_selection'),'entry_profile':result.get('intent',{}).get('entry_profile'),

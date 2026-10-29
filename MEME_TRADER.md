@@ -2,6 +2,49 @@
 
 ## Current meme execution runner
 
+### Hot-token and top-trader discovery
+
+The shared read-only collector now adds Pump's anonymous hot-token board and
+**top 10 daily/24h leaderboard wallets** to the existing Hot Callouts and
+user-supplied wallet inputs. Public endpoints:
+
+- `https://advanced-indexer.pump.fun/boards/trending?limit=20`
+- `https://frontend-api-v3.pump.fun/pnl-leaderboard?period=daily&limit=10`
+
+The first route currently serves a `movers` board, and is labeled as such. Its
+old `coins/top-runners` counterpart returns 404 and is not used. Non-Solana
+chains and unsupported non-Pump programs are filtered from hot-token discovery.
+Hot membership requires source/server timestamps no more than two minutes old.
+Provider `kol` counts remain unverified metadata; they are not confirmed buys.
+
+Original public wallets remain pinned in `paper_watchlist.json`; leaderboard
+wallets are merged in rank order, deduplicated, and capped together at 32.
+Only ranks 1–10 from the fresh daily/24h response are admitted, with a provider
+refresh no older than 30 minutes. Rank alone is not independent profitability,
+human-identity or wallet-independence verification; provider P&L may include
+unrealized positions. Leaderboard holdings are not treated as fresh purchases.
+The pinned config digest remains bound to the shared report, and each reader
+independently checks discovered-wallet freshness before admitting its signals.
+The existing three-wallet-per-poll RPC budget is unchanged: this is bounded,
+rotating observation rather than complete real-time coverage of every wallet.
+If a leaderboard fetch fails, pinned wallets remain available.
+
+Hot tokens enter the same ten-candidate scan pool in both live and paper modes.
+A fresh hot-board mint overlapping an exact confirmed recent buy by a watched
+wallet receives higher research priority. The overlap is shown in token
+analysis and recorded inside community-interest diagnostics, without adding a
+second independent score weight for the same underlying activity. Hot status
+alone does not satisfy the social-interest gate and never approves an order.
+The normal per-coin profile, on-chain safety, cost, bankroll, exit and simulation
+requirements still apply. No loss halt is reset and no real trade is copied.
+
+Shared collector status at `state/wallet_watch/status.json` includes
+`hot_tokens`, `hot_token_source`, `leaderboard_wallets`, `leaderboard_source`
+and `effective_wallet_count`. Consumers refresh these inputs for each candidate;
+stale ranks or buys cannot be renewed just by rereading the file. Reload the
+shared collector after a code update; real-money runners require a user-managed
+restart to import the new discovery/ranking code.
+
 ### Per-coin entry tolerance and paired testing
 
 The configured live policy is now `entry_profile_mode: adaptive`, explicitly

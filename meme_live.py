@@ -186,8 +186,11 @@ class MemeLiveEngine:
                 self.store.save('entry_profile_selection',selection)
                 profile_name=selection['selected_profile']
                 if profile_name is None:
+                    from meme_scorecard import scorecard
+                    assessment=scorecard(snapshot,now,self.rules)
+                    self.store.save('entry_scorecard',assessment)
                     return {'status':'watch' if selection['action']=='watch' else 'entry_rejected',
-                            'reasons':selection['reasons'],'profile_selection':selection}
+                            'reasons':selection['reasons'],'profile_selection':selection,'scorecard':assessment}
                 entry_rules=profiles(self.rules)[profile_name]
             from meme_scorecard import scorecard
             assessment=scorecard(snapshot,now,entry_rules)

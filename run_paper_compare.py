@@ -29,7 +29,8 @@ def market_cycle(comparison,sources,feed,wallets,mints=(),progress=None):
             row=sources.observation(mint)
             context=feed.read_context(wallets)
             row['research_context']={'source_status':context.get('status','unknown'),
-                'callouts':[c for c in context.get('callouts',[]) if c['mint']==mint],
+                'hot_tokens':[c for c in context.get('hot_tokens',[]) if c['mint']==mint],
+                'hot_token_source':context.get('hot_token_source',{}),'callouts':[c for c in context.get('callouts',[]) if c['mint']==mint],
                 'wallet_signals':[g for g in context.get('signals',[]) if g['mint']==mint]}
             if comparison.process(row) is not None:
                 processed+=1
