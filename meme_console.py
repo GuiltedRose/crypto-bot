@@ -92,6 +92,9 @@ def analysis_summary(record):
         line('Social activity',f"{record.get('fresh_callouts',0)} fresh callouts / {record.get('fresh_authors',0)} authors"),line('Liquidity',record.get('liquidity','Unknown')),
         line('On-chain risk',record.get('onchain_risk','Not checked yet')),'',line('Strategy',record.get('strategy','Unknown')),
         line('Decision',record.get('decision','Unknown')),line('Reason',record.get('reason','Unknown'))]
+    selection=record.get('profile_selection')
+    if selection: lines.append(line('Entry profile',selection.get('selected_profile') or 'None qualifying'))
+    elif record.get('entry_profile'): lines.append(line('Entry profile',record['entry_profile']))
     if record.get('watchlist',{}).get('retained'):
         lines.append(line('Watchlist',f"Retained; revisit after {record['watchlist']['revisit_after_seconds']}s"))
     score=record.get('scorecard')

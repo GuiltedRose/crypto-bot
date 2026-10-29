@@ -148,7 +148,7 @@ class MemeLiveEngine:
         if p['side']=='buy':
             if fill['base_delta']<p['minimum'] or fill['net_cash_lamports']>=0:
                 raise ValueError('Confirmed buy violates intent; manual reconciliation required')
-            s['position']=dict(mint=p['mint'],pool=p['pool'],kind=p['kind'],units=fill['base_delta'],
+            s['position']=dict(entry_profile=p.get('entry_profile'),mint=p['mint'],pool=p['pool'],kind=p['kind'],units=fill['base_delta'],
                 opened_at=tx.get('blockTime') or time.time(),cost_usd=-fill['net_cash_lamports']/1e9*p['sol_price_usd'],
                 base_account=p['base_account'],quote_account=p['quote_account'],entry_signature=row[0])
             with self.store.db:
@@ -165,6 +165,7 @@ class MemeLiveEngine:
 
     def prepare(self,snapshot,sol_price,equity,now=None):
         """Evaluate a candidate or held asset and construct/simulate its swap."""
+        self.last_profile_selection=None
         now=time.time() if now is None else now;positive(sol_price);positive(equity)
         s=self.store.state
         if s['pending']: return self.recover()
@@ -176,18 +177,30 @@ class MemeLiveEngine:
         side='sell' if position else 'buy'
         if side=='buy':
             if s['halted']: return {'status':'drawdown_halted'}
+            entry_rules=self.rules
+            profile_name=None
+            if self.rules.entry_profile_mode=='adaptive':
+                from meme_profiles import assess_profiles,profiles
+                selection=assess_profiles(snapshot,now,self.rules)
+                self.last_profile_selection=selection
+                self.store.save('entry_profile_selection',selection)
+                profile_name=selection['selected_profile']
+                if profile_name is None:
+                    return {'status':'watch' if selection['action']=='watch' else 'entry_rejected',
+                            'reasons':selection['reasons'],'profile_selection':selection}
+                entry_rules=profiles(self.rules)[profile_name]
             from meme_scorecard import scorecard
-            assessment=scorecard(snapshot,now,self.rules)
+            assessment=scorecard(snapshot,now,entry_rules)
             self.store.save('entry_scorecard',assessment)
-            reasons=entry_screen(snapshot,now,self.rules)
+            reasons=entry_screen(snapshot,now,entry_rules)
             if reasons: return {'status':'entry_rejected','reasons':reasons,'scorecard':assessment}
             from trend_pullback import assess_trend_pullback
-            signal=assess_trend_pullback(snapshot,now,self.rules)
+            signal=assess_trend_pullback(snapshot,now,entry_rules)
             if signal['action']!='buy': return {'status':'watch','signal':signal,'scorecard':assessment}
             bar=int(snapshot['candle_history']['candles'][-1]['timestamp'])
             used=self.store.db.execute('SELECT bar FROM bars WHERE mint=? AND pool=?',(snapshot['mint'],snapshot['pool'])).fetchone()
             if used and used[0]>=bar: return {'status':'already_entered_on_completed_candle'}
-        else: bar=None
+        else: bar=None;profile_name=position.get("entry_profile")
         adapter=self.adapter_factory(self.rpc,self.user,snapshot['mint'],snapshot['pool'],snapshot['market_kind'])
         market=adapter.snapshot(for_entry=side=='buy')
         if position:
@@ -231,7 +244,7 @@ class MemeLiveEngine:
             round_trip=(2*simulated['fee_lamports']/1e9*sol_price+units/1e9*sol_price*2*(market['fee_bps']/10000+self.rules.slippage_per_side))
             if round_trip+setup>=self.rules.max_loss_usd: return {'status':'estimated_costs_exceed_loss_budget'}
         intent=dict(id=str(uuid.uuid4()),side=side,mint=snapshot['mint'],pool=snapshot['pool'],kind=snapshot['market_kind'],
-            onchain_risk=risk_report,input_units=units,minimum=context['min_output'],sol_price_usd=sol_price,bar=bar,reason=reason,
+            onchain_risk=risk_report,entry_profile=profile_name,input_units=units,minimum=context['min_output'],sol_price_usd=sol_price,bar=bar,reason=reason,
             base_account=str(market['base_user']),quote_account=str(market['quote_user']),simulation=simulated,
             message_hash=context['message_hash'],last_valid_block_height=context['last_valid_block_height'])
         if not self.execute:

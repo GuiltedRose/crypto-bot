@@ -93,4 +93,5 @@ def token_analysis(snapshot,result,rules,now):
             'momentum':momentum,'buy_volume':buy_volume,'watched_buyers':interest['watched_buy_wallets'],
             'fresh_callouts':len(ids),'fresh_authors':interest['callout_authors'],'social_source_status':context.get('source_status','unknown'),
             'liquidity':liquidity,'onchain_risk':risk_label,'strategy':'Trend Pullback','decision':decision,'reason':reason,
+            'profile_selection':result.get('profile_selection'),'entry_profile':result.get('intent',{}).get('entry_profile'),
             'watchlist':result.get('watchlist',{}),'scorecard':result.get('scorecard')}

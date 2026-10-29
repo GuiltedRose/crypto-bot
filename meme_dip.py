@@ -16,6 +16,7 @@ USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 class DipRules:
     evidence_mode: str = 'strict'
     entry_style: str = 'ath_dip'
+    entry_profile_mode: str = 'fixed'
     trend_min_bars: int = 8
     trend_min_gain_fraction: float = .05
     trend_pullback_min_fraction: float = .02
@@ -50,12 +51,14 @@ class DipRules:
             raise ValueError('Unknown paper evidence mode')
         if type(self.trend_min_bars) is not int or not 3<=self.trend_min_bars<=12:
             raise ValueError('Trend history minimum must be 3 through 12 completed candles')
+        if self.entry_profile_mode not in ('fixed','adaptive') or self.entry_profile_mode=='adaptive' and self.entry_style!='trend_pullback':
+            raise ValueError('Adaptive entry profiles require the trend/pullback strategy')
         if self.entry_style not in ('ath_dip','trend_pullback'):
             raise ValueError('Unknown paper entry style')
         if not 0 < self.trend_pullback_min_fraction < self.trend_pullback_max_fraction < 1 or self.max_holding_seconds<=0 or not 0<self.max_liquidity_allocation_fraction<1:
             raise ValueError('Invalid trend entry settings')
         for key,value in asdict(self).items():
-            if key not in ('evidence_mode','entry_style'):
+            if key not in ('evidence_mode','entry_style','entry_profile_mode'):
                 number(value, 0)
         for value in (self.min_dip_fraction, self.max_dip_fraction, self.stop_fraction,
                       self.allocation_cap, self.intended_risk_fraction, self.drawdown_halt):
@@ -248,6 +251,14 @@ class PaperDipTrader:
             return {'action': 'hold', 'reason': 'manage paper position'}
         if self.halted:
             return {'action': 'reject', 'reason': 'paper drawdown halt'}
+        profile_name=None
+        if r.entry_profile_mode=='adaptive':
+            from meme_profiles import assess_profiles,profiles
+            selection=assess_profiles(snapshot,now,r)
+            profile_name=selection['selected_profile']
+            if profile_name is None:
+                return {'action':selection['action'],'reasons':selection['reasons'],'profile_selection':selection}
+            r=profiles(r)[profile_name]
         reasons = entry_screen(snapshot, now, r)
         if reasons:
             # A recovery must be observed again after an evidence outage.
@@ -322,7 +333,7 @@ class PaperDipTrader:
             self.native_sol -= budget/self.sol_price_usd
         else:
             self.cash -= budget
-        self.position = {'mint': mint, 'pool': pool, 'quantity': quantity, 'entry_price': fill_price,
+        self.position = {'mint': mint, 'pool': pool, 'entry_profile':profile_name,'quantity': quantity, 'entry_price': fill_price,
                          'stop': fill_price*(1-r.stop_fraction), 'target': fill_price*(1+r.stop_fraction*r.target_r),
                          'cash_spent': budget,'entry_fee_per_side':trade_fee,'take_profit_usd':r.take_profit_usd,'max_loss_usd':r.max_loss_usd,'entry_style':r.entry_style,'opened_at':now, 'quote_mint':quote_mint,'exit_fixed_cost': cash_fixed,
                          'rent_is_refundable':self.native_sol is not None and refundable,

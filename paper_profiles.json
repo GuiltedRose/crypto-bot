@@ -1,0 +1,5 @@
+{
+  "current": {"max_candle_range_fraction": 0.30, "min_buy_volume_usd": 5000, "trend_pullback_max_fraction": 0.15},
+  "moderate": {"max_candle_range_fraction": 0.45, "min_buy_volume_usd": 2500, "trend_pullback_max_fraction": 0.20},
+  "aggressive": {"max_candle_range_fraction": 0.60, "min_buy_volume_usd": 1000, "trend_pullback_max_fraction": 0.25}
+}

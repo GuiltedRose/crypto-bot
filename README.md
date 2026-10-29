@@ -1,5 +1,13 @@
 # Solana spot trading bot
 
+Current meme selection supports per-coin entry profiles: assess Current,
+Moderate and Aggressive, then choose the narrowest qualifying setup while
+keeping dollar risk and slippage fixed. `run_paper_compare.py` compares all
+three fixed profiles plus the selector on one shared stream. See
+[selection, paper comparison and live adoption](MEME_TRADER.md#per-coin-entry-tolerance-and-paired-testing).
+This is rules-based selection, not an established profitable learning model.
+
+
 The meme execution runner is now `run_meme_live.py`: Pump trend/pullback signals,
 locally built Pump/PumpSwap swaps, unsigned simulation by default, and an explicit
 user-operated signed mode. See [setup, limits and execution scope](MEME_TRADER.md#current-meme-execution-runner).

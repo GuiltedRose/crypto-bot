@@ -114,6 +114,7 @@ def main():
     parser.add_argument('--balance', type=float, help='Starting virtual USDC; required for a new run/reset')
     parser.add_argument('--native-sol', type=float, help='Optional virtual native SOL; enables execution-cost/reserve ledger')
     parser.add_argument('--sol-price', type=float, help='Initial SOL/USD valuation when using --native-sol')
+    parser.add_argument('--profile',choices=['current','moderate','aggressive','adaptive'],help='Shared entry-tolerance profile; existing runs require reset or a fresh state directory')
     parser.add_argument('--rules', type=Path)
     parser.add_argument('--exploratory',action='store_true',help='Paper-only market/chart experiment; unknown safety stays unqualified')
     parser.add_argument('--assume-usd-costs', action='store_true', help='Explicit scenario mode without a native-SOL ledger')
@@ -160,6 +161,9 @@ def main():
     if args.reset and args.balance is None:
         parser.error('--reset requires --balance')
     rules = DipRules(**json.loads(args.rules.read_text())) if args.rules else None
+    if args.profile:
+        from meme_profiles import selected
+        rules=selected(rules or DipRules(entry_style='trend_pullback'),args.profile)
     if args.exploratory:
         rules=replace(rules or DipRules(),evidence_mode='market_only')
     exists = (args.state_dir/'paper.sqlite').exists()

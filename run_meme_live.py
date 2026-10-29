@@ -117,6 +117,7 @@ def tick(engine,sources,feed,wallets,mints,discover=True,progress=None):
             current_price=valuation(sources)
             current_equity=wallet_equity(engine.rpc,engine.user,current_price,None,sources,engine.store.state.get('rent_accounts',[]))
             result=engine.prepare(row,current_price,current_equity)
+            if getattr(engine,'last_profile_selection',None): result['profile_selection']=engine.last_profile_selection
             result['watchlist']=watchlist.observe(row,result,engine.rules)
             decisions.append({'mint':mint,**result})
             if progress: progress(token_analysis(row,result,engine.rules,time.time()))
@@ -165,6 +166,7 @@ def main():
     parser.add_argument('--rpc',default='https://api.mainnet-beta.solana.com')
     parser.add_argument('--risk-rpc',help='Optional HTTPS read-only RPC for indexed holder/trade queries; never receives signed transactions')
     parser.add_argument('--adopt-rules',action='store_true',help='Explicitly adopt changed rules only when flat with no unresolved orders; preserves P&L and drawdown halt')
+    parser.add_argument('--profile',choices=['current','moderate','aggressive','adaptive'],help='Shared entry-tolerance profile; dollar limits and slippage are unchanged')
     parser.add_argument('--rules',type=Path,default=Path('meme_live_rules.json'))
     parser.add_argument('--state-dir',type=Path)
     parser.add_argument('--watchlist',type=Path,default=Path('paper_watchlist.json'))
@@ -179,7 +181,8 @@ def main():
     args=parser.parse_args()
     if not 10<=args.interval<=3600: parser.error('Interval must be 10 through 3600 seconds')
     if len(args.mint)>5 or any(not valid_mint(mint) for mint in args.mint): parser.error('At most five valid mints')
-    rules=DipRules(**json.loads(args.rules.read_text()))
+    from meme_profiles import selected
+    rules=selected(DipRules(**json.loads(args.rules.read_text())),args.profile)
     if rules.entry_style!='trend_pullback' or min(rules.max_position_usd,rules.take_profit_usd,rules.max_loss_usd)<=0:
         parser.error('Live meme profile requires trend strategy and explicit dollar limits')
     os.umask(0o077)
@@ -220,7 +223,7 @@ def main():
             tmp=directory/'status.tmp';tmp.write_text(json.dumps(record,allow_nan=False));tmp.replace(directory/'status.json')
             from meme_console import format_status
             print(json.dumps(record) if args.json else format_status(record,rules),flush=True)
-        publish({'status':'started','execution_enabled':args.execute,'position_open':store.state['position'] is not None,
+        publish({'status':'started','strategy_profile':args.profile or 'configured','execution_enabled':args.execute,'position_open':store.state['position'] is not None,
                  'pending_order':store.state['pending'] is not None})
         wallets=load_watchlist(args.watchlist)
         try: ensure_worker(args.watchlist,args.wallet_source_dir,args.rpc)

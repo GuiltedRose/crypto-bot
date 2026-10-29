@@ -2,6 +2,76 @@
 
 ## Current meme execution runner
 
+### Per-coin entry tolerance and paired testing
+
+The configured live policy is now `entry_profile_mode: adaptive`, explicitly
+selected by the user. On each fresh coin observation, paper and live assess:
+
+| Profile | Maximum 1m range | Minimum hourly buys | Pullback |
+| --- | ---: | ---: | ---: |
+| Current | 30% | $5,000 | 2–15% |
+| Moderate | 45% | $2,500 | 2–20% |
+| Aggressive | 60% | $1,000 | 2–25% |
+
+The rules-based selector chooses the **narrowest qualifying profile for that
+coin**, not the best profile in hindsight. It logs all three assessments and
+the selected profile. No qualifying profile means watch/reject, never forced
+entry. Full on-chain, execution, cost, reserve and duplicate-candle checks still
+run after market-profile selection. This is not a trained profit predictor.
+Dollar exposure, $1 net target, $0.20 loss trigger, 5% drawdown halt and 0.5%
+slippage are identical across profiles; adaptive selection cannot widen them.
+The $50,000 `min_liquidity_usd` setting applies to the older ATH profile, not
+the trend profile: trend sizing is limited by the configured pool-allocation
+fraction and available funds, followed by execution validation.
+
+For a flat live state, explicitly adopt the new selector on your next restart:
+
+```bash
+.venv/bin/python run_meme_live.py --execute --loop --profile adaptive --adopt-rules
+```
+
+This is a user-operated real-money command. No funded process is restarted by
+the comparison. Fixed `--profile current`, `moderate`, or `aggressive` choices
+remain available in both runners. Existing paper runs preserve their saved
+policy: use a fresh `--state-dir` or an explicit archived reset for a new policy.
+
+The shared-data paper experiment runs the three fixed profiles **plus a fourth
+portfolio using the per-coin selector**. All start with identical independent
+virtual inventory and receive the exact same durable observation stream in the
+same order. Each market snapshot is fetched once; union-held exit quotes are
+prioritized. A journal recovers partial fan-out without duplicate paper fills.
+There is no `.env` read, signer, submission, or automatic live promotion.
+
+```bash
+# New forward experiment: each portfolio starts with $6.50 modeled entirely as SOL.
+.venv/bin/python run_paper_compare.py --bankroll-usd 6.50 --loop
+# Resume the same experiment without resetting inventory or rules.
+.venv/bin/python run_paper_compare.py --loop
+# Read the saved report without launching any funded trader.
+.venv/bin/python run_paper_compare.py --status
+# Historical replay: choose the starting period's SOL valuation, not today's.
+.venv/bin/python run_paper_compare.py --state-dir state/comparison_replay --replay-db state/paper_memes/paper.sqlite --bankroll-usd 6.50 --sol-price STARTING_SOL_USD
+```
+
+Use `--balance`, `--native-sol`, and `--sol-price` instead of `--bankroll-usd` to
+model a particular SOL/USDC split. `--feed FILE.jsonl` supports shared historical
+replay; `--run-id` selects an archived recorded run. `--no-selector` compares only
+the three fixed portfolios in a fresh experiment. `report.json` and the frozen
+`manifest.json` are under `state/paper_comparison/`; changing profiles/inventory
+requires a separate experiment directory. The earlier single paper ledger is
+preserved and is not merged into these results.
+
+Reports include entries/closed trades, net realized P&L, open positions, estimated
+liquidation equity after modeled exit costs, marked drawdown, rejected entry
+observations, blocked exits and modeled slippage. Real execution failure rates
+and observed slippage remain unknown in paper. Results are broken down by coin,
+selected entry profile, and observed candle-range bands (<=30%, 30–45%, 45–60%,
+>60%). Native SOL price changes also affect portfolio equity and are not
+realized trading profit. The three entry dimensions change together, so these
+comparisons do not isolate their separate causal effects. Target/stop methods
+are held constant; trailing or volatility-adjusted exits need a separate paired
+experiment with defined parameters. No outcome proves future positive returns.
+
 `run_meme_live.py` is separate from the legacy Donchian `run_live.py` runner.
 It connects Pump market data and the shared wallet/Hot Callouts feed to the
 trend/pullback strategy. Transactions are built locally from pinned official
@@ -210,7 +280,7 @@ Source IDs and organic/wash estimates must be verified by the future collector;
 this validator cannot establish that independently. Wallet links and bundles
 can remain undetected. Passing never proves a token is free of manipulation.
 
-Remaining work before live meme trading:
+Historical conversion worklist (see current implementation and limitations above):
 
 - Use pump.fun as the primary narrative/discovery source and implement
   timestamped, mint-linked observations, historical topic momentum and ranking. Repeated posts must not count as
