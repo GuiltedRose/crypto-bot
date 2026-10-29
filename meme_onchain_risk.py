@@ -15,13 +15,18 @@ class OnchainRisk:
     def __init__(self,rpc,clock=time.time):
         self.rpc,self.clock=rpc,clock
         self.cache={}
+        self.retry_after=0
 
     def assess(self,adapter,market):
         key=(str(adapter.mint),str(adapter.pool))
         cached=self.cache.get(key)
         if cached and 0<=self.clock()-cached['observed_at']<=30:
             return copy.deepcopy(cached)
+        if self.clock()<self.retry_after:
+            return {'passed':False,'status':'rate_limited','reasons':['on-chain RPC cooldown; retry later'],
+                    'retry_after':self.retry_after}
         result=self._observe(adapter,market)
+        if result.get('provider_error_code')==429: self.retry_after=self.clock()+60
         if len(self.cache)>=128: self.cache.clear()
         self.cache[key]=copy.deepcopy(result)
         return result

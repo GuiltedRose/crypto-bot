@@ -59,3 +59,17 @@ class ReclaimTests(unittest.TestCase):
                 engine.risk_assessor=type('GoodRisk',(),{'assess':lambda *args:{'passed':True}})()
                 self.assertEqual(engine.prepare(r,100,6.5,1200)['status'],'unsigned_simulation_passed')
             finally:store.close()
+
+    def test_setup_survives_more_than_three_candles(self):
+        r=setup();bars=r['candle_history']['candles']
+        bars[-1].update(close=1.15,high=1.18,volume_usd=100)
+        bars.append(dict(timestamp=bars[-1]['timestamp']+60,open=1.15,high=1.24,low=1.04,close=1.22,volume_usd=300,final=True))
+        r['observed_at']=1260;r['candle_history']['retrieved_at']=1260
+        self.assertEqual(assess_volume_candles(r,1260,policy())['action'],'buy')
+
+    def test_percentage_sizing_uses_shared_budget(self):
+        p=replace(policy(),position_fraction=.274,max_loss_fraction=.112,take_profit_fraction=.562)
+        r=setup();trader=PaperDipTrader(0,p,.065,100)
+        bought=trader.on_snapshot(r)
+        self.assertEqual(bought['action'],'paper_buy',bought)
+        self.assertAlmostEqual(bought['budget_usd'],p.entry_budget(6.5,5))

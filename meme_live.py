@@ -288,7 +288,7 @@ class MemeLiveEngine:
         else:
             # Preserve the explicit dollar reserve and native exit reserve.
             available=(market['native_lamports']+market.get('quote_balance',0)-int(self.rules.native_fee_reserve_sol*1e9)-5040000)/1e9*sol_price-self.rules.reserve_usd
-            budget=min(self.rules.position_cap(equity),available)
+            budget=self.rules.entry_budget(equity,available)
             if self.rules.entry_style!='volume_candles': budget=min(budget,snapshot['liquidity_usd']*self.rules.max_liquidity_allocation_fraction)
             if budget<=0: return {'status':'insufficient_spendable_SOL_after_reserves'}
             units=int(budget/sol_price*1e9);reason='volume and candle minimums' if self.rules.entry_style=='volume_candles' else 'trend pullback'

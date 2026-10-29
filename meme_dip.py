@@ -90,6 +90,13 @@ class DipRules:
     def position_cap(self, bankroll):
         return bankroll*self.position_fraction if self.position_fraction else (self.max_position_usd or bankroll*self.allocation_cap)
 
+    def entry_budget(self,bankroll,available,*,fixed_cost=0,trade_fee=None):
+        budget=max(0,min(self.position_cap(bankroll),available))
+        if self.max_loss_fraction or self.max_loss_usd:
+            return budget
+        rate=self.stop_fraction+2*((self.fee_per_side if trade_fee is None else trade_fee)+self.slippage_per_side)
+        return min(budget,max(0,bankroll*self.intended_risk_fraction-2*fixed_cost)/max(rate,1e-15))
+
     def exit_limits(self, notional):
         return (notional*self.take_profit_fraction if self.take_profit_fraction else self.take_profit_usd,
                 notional*self.max_loss_fraction if self.max_loss_fraction else self.max_loss_usd)
@@ -354,16 +361,10 @@ class PaperDipTrader:
             if self.native_sol < r.native_fee_reserve_sol+network*2+entry_rent+exit_rent:
                 return {'action': 'reject', 'reason': 'paper native fee reserve'}
             fixed = (network+(0 if refundable else (entry_rent+exit_rent)/2))*self.sol_price_usd
-        cap=r.position_cap(equity)
-        _,loss_limit=r.exit_limits(cap)
-        risk_available = max(0, (loss_limit if loss_limit>0 else equity*r.intended_risk_fraction)-fixed*2)
-        risk_rate = (0 if loss_limit>0 else r.stop_fraction)+2*(trade_fee+r.slippage_per_side)
-        risk_rate=max(risk_rate,1e-15)
         available=self.cash-r.reserve_usd
         if quote_mint==SOL_MINT:
             available=min(equity-r.reserve_usd,(self.native_sol-r.native_fee_reserve_sol-network*2-entry_rent-exit_rent)*self.sol_price_usd)
-        budget = max(0, min(available, cap,
-                           risk_available/risk_rate))
+        budget=r.entry_budget(equity,available,fixed_cost=fixed,trade_fee=trade_fee)
         if r.entry_style=='trend_pullback':
             budget=min(budget,snapshot['liquidity_usd']*r.max_liquidity_allocation_fraction)
         profit_target,loss_limit=r.exit_limits(budget)

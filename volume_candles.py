@@ -24,7 +24,7 @@ def assess_volume_candles(snapshot,now,rules):
         if not 0<=now-number(history['retrieved_at'])<=120: reasons.append('stale candle retrieval')
         bars=history['candles']
         if not isinstance(bars,list): raise ValueError('Candle array required')
-        bars=bars[-rules.trend_min_bars:]
+        bars=bars[-12:] if rules.momentum_reclaim_enabled else bars[-rules.trend_min_bars:]
         if len(bars)<rules.trend_min_bars: reasons.append(f'only {len(bars)} completed 1m candles available; need {rules.trend_min_bars}')
         previous=-1
         for row in bars:
@@ -50,25 +50,27 @@ def assess_reclaim(snapshot,bars,rules):
     def watch(reason,**metrics):
         return {'action':'watch','reasons':[], 'reason':reason,'metrics':metrics}
     if len(bars)<3: return watch('need impulse, pullback and reclaim candles')
-    # Reserve the final two completed candles for pullback and confirmation.
-    impulse=bars[:-2];dip,reclaim=bars[-2:]
-    if any(b['timestamp']-a['timestamp']!=60 for a,b in zip(bars,bars[1:])):
-        return watch('waiting for contiguous momentum candles')
-    peak=max(b['high'] for b in impulse)
-    gain=impulse[-1]['close']/impulse[0]['open']-1
-    if gain<rules.trend_min_gain_fraction or impulse[-1]['close']<=impulse[0]['open']:
-        return watch('waiting for an upward impulse')
-    depth=1-dip['low']/peak
-    if dip['close']>=dip['open'] or dip['low']>=impulse[-1]['low'] and dip['close']>=impulse[-1]['close']:
-        return watch('waiting for a completed pullback')
-    if not rules.trend_pullback_min_fraction<=depth<=rules.trend_pullback_max_fraction:
-        return watch('pullback outside the configured setup range',pullback_fraction=depth)
-    if reclaim['low']<dip['low']:
-        return watch('pullback low broke; setup invalidated')
-    if reclaim['close']<=dip['high'] or reclaim['close']<=reclaim['open']:
-        return watch('waiting for a completed reclaim above pullback high')
-    if reclaim['volume_usd']<dip['volume_usd'] or reclaim['volume_usd']<=0:
-        return watch('reclaim lacks renewed trading activity')
+    # Search observed setups, keeping the impulse while later bars confirm it.
+    reclaim=bars[-1]
+    found=[]
+    for index in range(1,len(bars)-1):
+        impulse=bars[max(0,index-6):index];dip=bars[index]
+        window=bars[max(0,index-6):]
+        if any(b['timestamp']-a['timestamp']!=60 for a,b in zip(window,window[1:])): continue
+        peak=max(b['high'] for b in impulse)
+        gain=max(b['close'] for b in impulse)/impulse[0]['open']-1
+        depth=1-dip['low']/peak
+        if gain<rules.trend_min_gain_fraction: continue
+        if dip['close']>=dip['open'] or dip['close']>=impulse[-1]['close']: continue
+        if not rules.trend_pullback_min_fraction<=depth<=rules.trend_pullback_max_fraction: continue
+        # A later low invalidates this setup, rather than moving its reference.
+        if min(b['low'] for b in bars[index+1:])<dip['low']: continue
+        found.append((dip,peak,gain,depth))
+    if not found: return watch('no intact momentum/pullback setup in observed history')
+    qualified=[x for x in found if reclaim['close']>x[0]['high'] and reclaim['close']>reclaim['open']
+               and reclaim['volume_usd']>=x[0]['volume_usd'] and reclaim['volume_usd']>0]
+    if not qualified: return watch('waiting for reclaim with renewed activity',setups_tracked=len(found))
+    dip,peak,gain,depth=qualified[-1]
     price=snapshot['price_usd']
     if price<dip['high'] or price>reclaim['close']*(1+rules.slippage_per_side):
         return watch('reclaim lost or entry already moved; do not chase')
