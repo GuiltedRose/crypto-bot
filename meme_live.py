@@ -176,11 +176,14 @@ class MemeLiveEngine:
         side='sell' if position else 'buy'
         if side=='buy':
             if s['halted']: return {'status':'drawdown_halted'}
+            from meme_scorecard import scorecard
+            assessment=scorecard(snapshot,now,self.rules)
+            self.store.save('entry_scorecard',assessment)
             reasons=entry_screen(snapshot,now,self.rules)
-            if reasons: return {'status':'entry_rejected','reasons':reasons}
+            if reasons: return {'status':'entry_rejected','reasons':reasons,'scorecard':assessment}
             from trend_pullback import assess_trend_pullback
             signal=assess_trend_pullback(snapshot,now,self.rules)
-            if signal['action']!='buy': return {'status':'watch','signal':signal}
+            if signal['action']!='buy': return {'status':'watch','signal':signal,'scorecard':assessment}
             bar=int(snapshot['candle_history']['candles'][-1]['timestamp'])
             used=self.store.db.execute('SELECT bar FROM bars WHERE mint=? AND pool=?',(snapshot['mint'],snapshot['pool'])).fetchone()
             if used and used[0]>=bar: return {'status':'already_entered_on_completed_candle'}
@@ -201,9 +204,11 @@ class MemeLiveEngine:
             if budget<=0: return {'status':'insufficient_spendable_SOL_after_reserves'}
             units=int(budget/sol_price*1e9);reason='trend pullback'
             if units<=0: return {'status':'position_rounds_to_zero'}
+        risk_report=None
         if side=='buy':
             if self.risk_assessor:
                 risk=self.risk_assessor.assess(adapter,market)
+                risk_report=risk
                 self.store.save('onchain_entry_risk',risk)
                 if not risk['passed']: return {'status':'onchain_risk_rejected','risk':risk}
                 # Risk sampling may take time; never use its old reserve quote.
@@ -226,7 +231,7 @@ class MemeLiveEngine:
             round_trip=(2*simulated['fee_lamports']/1e9*sol_price+units/1e9*sol_price*2*(market['fee_bps']/10000+self.rules.slippage_per_side))
             if round_trip+setup>=self.rules.max_loss_usd: return {'status':'estimated_costs_exceed_loss_budget'}
         intent=dict(id=str(uuid.uuid4()),side=side,mint=snapshot['mint'],pool=snapshot['pool'],kind=snapshot['market_kind'],
-            input_units=units,minimum=context['min_output'],sol_price_usd=sol_price,bar=bar,reason=reason,
+            onchain_risk=risk_report,input_units=units,minimum=context['min_output'],sol_price_usd=sol_price,bar=bar,reason=reason,
             base_account=str(market['base_user']),quote_account=str(market['quote_user']),simulation=simulated,
             message_hash=context['message_hash'],last_valid_block_height=context['last_valid_block_height'])
         if not self.execute:
@@ -243,4 +248,6 @@ class MemeLiveEngine:
         s['pending']=intent;self.store.save('reserved',intent)
         signed=VersionedTransaction(unsigned.message,[self.signer])
         self.orders.submit(intent['id'],str(signed.signatures[0]),bytes(signed))
-        return self.recover()
+        confirmed=self.recover()
+        if risk_report is not None: confirmed['risk']=risk_report
+        return confirmed

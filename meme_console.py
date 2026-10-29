@@ -9,6 +9,7 @@ def format_status(record,rules=None):
     status=record.get('status','unknown')
     mint=record.get('mint','')
     short=mint[:6]+'…'+mint[-4:] if len(mint)>14 else mint
+    if status=='token_analysis': return analysis_summary(record)
     if status=='started':
         return f"{prefix} Started | position: {'open' if record.get('position_open') else 'none'} | pending order: {'yes' if record.get('pending_order') else 'none'}"
     if status=='checking_wallet_and_market': return f'{prefix} Checking wallet and market data…'
@@ -66,6 +67,7 @@ def scan_summary(record,clock):
     if other: lines.append(line('Other outcomes',other))
     if unsupported: lines.append(line('Unsupported skipped',unsupported))
     lines.append(line('Source errors',errors))
+    if 'watched_candidates' in record: lines.append(line('Watchlist size',record['watched_candidates']))
     lines+=['','REJECTION SUMMARY']
     labels=['Extreme volatility','Insufficient history','Price deviation','Low buying volume']
     labels+=[label for label in sorted(categories) if label not in labels]
@@ -76,4 +78,25 @@ def scan_summary(record,clock):
             line('Live execution','ENABLED' if record.get('execution_enabled') is True else 'DISABLED')]
     if 'next_check_seconds' in record: lines.append(line('Next check',f"{record['next_check_seconds']:g}s"))
     if record.get('mode')=='unsigned_simulation': lines.append('Unsigned simulation; no trades submitted.')
+    return '\n'.join(lines)
+
+
+def analysis_summary(record):
+    def safe(value): return ''.join(char for char in str(value) if char.isprintable())[:240]
+    mint=record.get('mint','')
+    title=safe(record.get('symbol') or (mint[:6]+'…'+mint[-4:] if len(mint)>14 else mint))
+    def line(label,value): return f'{label+":":<24}{safe(value)}'
+    lines=['TOKEN ANALYSIS: '+title,'─'*40,line('Mint',mint),
+        line('Price momentum',record.get('momentum','Unknown')),line('Buy volume',record.get('buy_volume','Unavailable')),
+        line('Watched wallets',f"{record.get('watched_buyers',0)} recent buyers"),
+        line('Social activity',f"{record.get('fresh_callouts',0)} fresh callouts / {record.get('fresh_authors',0)} authors"),line('Liquidity',record.get('liquidity','Unknown')),
+        line('On-chain risk',record.get('onchain_risk','Not checked yet')),'',line('Strategy',record.get('strategy','Unknown')),
+        line('Decision',record.get('decision','Unknown')),line('Reason',record.get('reason','Unknown'))]
+    if record.get('watchlist',{}).get('retained'):
+        lines.append(line('Watchlist',f"Retained; revisit after {record['watchlist']['revisit_after_seconds']}s"))
+    score=record.get('scorecard')
+    if score:
+        value=f"{score['score']*100:.0f}/100" if score.get('score') is not None else 'Incomplete'
+        coverage=f"{score['coverage_fraction']*100:.0f}% coverage" if score.get('coverage_fraction') is not None else 'coverage unavailable'
+        lines.append(line('Shadow signal score',value+f" ({coverage}; diagnostic only)"))
     return '\n'.join(lines)

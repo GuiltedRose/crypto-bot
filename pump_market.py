@@ -63,6 +63,7 @@ class PumpMarketSources(PublicSources):
             except Exception as error: errors[label]=source_error(error)
         now=int(time.time()) if now is None else now
         snapshot={'mint':mint,'pool':pool,'observed_at':now,
+                  'symbol':coin.get('symbol')[:80] if isinstance(coin.get('symbol'),str) else None,
                   'price_usd':number(float(coin['price_usd']),1e-15),
                   'market_source_url':url,'market_source':'pump.fun','market_program':program,
                   'market_kind':'pumpswap' if coin.get('complete') is True else 'bonding_curve',

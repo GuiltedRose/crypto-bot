@@ -94,7 +94,10 @@ def tick(engine,sources,feed,wallets,mints,discover=True,progress=None):
     if discover:
         try: discovered=[row['mint'] for row in sources.discover()]
         except Exception as error: errors['discovery']=type(error).__name__
-    pinned=list(dict.fromkeys(mints+ranked[:2]))[:10]
+    from meme_watchlist import CandidateWatchlist,token_analysis
+    watchlist=CandidateWatchlist(engine.store.db)
+    due=watchlist.due(3)
+    pinned=list(dict.fromkeys(mints+due+ranked[:2]))[:10]
     remaining=[mint for mint in dict.fromkeys(ranked+discovered) if mint not in pinned]
     cursor=engine.store.state.get('scan_cursor',0)
     count=min(10-len(pinned),len(remaining))
@@ -108,24 +111,27 @@ def tick(engine,sources,feed,wallets,mints,discover=True,progress=None):
         try:
             row=sources.observation(mint)
             fresh=feed.read_context(wallets)
-            row['research_context']={'callouts':[r for r in fresh.get('callouts',[]) if r['mint']==mint],
+            row['research_context']={'source_status':fresh.get('status','unknown'),'callouts':[r for r in fresh.get('callouts',[]) if r['mint']==mint],
                 'wallet_signals':[r for r in fresh.get('signals',[]) if r['mint']==mint]}
             # Fetch a fresh valuation after potentially slow market requests.
             current_price=valuation(sources)
             current_equity=wallet_equity(engine.rpc,engine.user,current_price,None,sources,engine.store.state.get('rent_accounts',[]))
             result=engine.prepare(row,current_price,current_equity)
+            result['watchlist']=watchlist.observe(row,result,engine.rules)
             decisions.append({'mint':mint,**result})
-            if progress: progress({'mint':mint,**result})
+            if progress: progress(token_analysis(row,result,engine.rules,time.time()))
             if result['status'] in ('confirmed_buy','unsigned_simulation_passed') or engine.store.state['pending']:
                 break
         except UnsupportedMarket:
+            watchlist.remove(mint)
             skipped[mint]='unsupported market or quote asset'
             if progress: progress({'status':'unsupported_market','mint':mint,'reason':skipped[mint]})
         except Exception as error:
+            watchlist.failed(mint)
             errors[mint]=type(error).__name__
             if progress: progress({'status':'candidate_source_error','mint':mint,'error_type':type(error).__name__})
     return {'status':'scan_complete','decisions':decisions,'source_errors':errors,'skipped_markets':skipped,
-            'realized_pnl_usd':engine.store.state['realized_pnl_usd'],'execution_enabled':engine.execute}
+            'realized_pnl_usd':engine.store.state['realized_pnl_usd'],'execution_enabled':engine.execute,'watched_candidates':watchlist.count()}
 
 
 def cycle_rest(state,interval):

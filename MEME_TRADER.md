@@ -81,6 +81,43 @@ existing drawdown halt. It refuses changes with open positions, pending intents
 or unresolved submitted orders. Stop the old process and add this flag to your
 usual invocation once; subsequent restarts use the saved matching rules.
 
+The runner also keeps an automatic **candidate watchlist**, separate from the
+public trader-wallet watchlist. It retains trend candidates awaiting a pullback
+and socially active/high-buy-volume candidates with temporary entry rejections.
+Up to three of the ten scan slots revisit retained candidates after a minimum
+60-second delay, even if their mint disappears from current incoming feeds.
+Actual revisit time includes scan and source latency. Retention expires after
+30 minutes without extending the original expiry on every observation; capacity
+is 100, with older due observations prioritized. Fresh incoming leads can add a
+coin again after expiry. Confirmed buys, unsupported markets and known on-chain
+concentration/coordination flags remove candidates. Temporary provider failures
+do not certify or permanently blacklist them. Every revisit fetches fresh
+market/social observations and reruns normal entry, safety, cost and execution
+checks. A retained coin is never an approved order. The SQLite table is
+`candidate_watchlist` inside the runner's existing state database.
+
+Per-token console analysis shows momentum, measured buy volume, watched buyers,
+fresh callouts/authors, liquidity, actual on-chain check status, decision/reason
+and retention. It never infers increasing volume from a single aggregate or
+labels unperformed risk checks passed. Token labels have terminal control
+characters removed. Detailed decisions/status remain available with `--json`.
+
+An equally weighted **shadow scorecard** now records price structure, buying
+demand, market depth and community interest before entry screening. Correlated
+social inputs stay within one family; missing data remains unknown and weights
+are not redistributed. The score is not a profit probability and currently
+changes no order decision. Its purpose is to compare a combined-signal
+hypothesis with the existing veto-based policy before replacing that policy.
+Safety and dollar limits remain hard constraints.
+
+`adaptive.py` evaluates the older hourly strategy; it does not train this meme
+runner. Inspect confirmed meme outcomes with
+`.venv/bin/python meme_results.py`. It reports wins, losses, breakeven trades,
+average net outcomes, failed-transaction fees, realized P&L and unresolved/open
+inventory flags. No-trade win rates/expectancy are unknown, not fictitious
+success. Closed-trade averages exclude open inventory and are descriptive;
+there is no automatic live optimization/promotion or established positive edge.
+
 Each flat-wallet cycle selects up to **10 unique candidates** and then rests
 **30 seconds** by default (`--interval` changes this rest). Fewer available
 leads or an accepted/pending order can end a scan earlier. Open positions and

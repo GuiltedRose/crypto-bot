@@ -34,7 +34,7 @@ def social_interest(snapshot,now,rules):
             'independent_human_verified':False}
 
 
-def assess_trend_pullback(snapshot,now,rules):
+def assess_trend_pullback(snapshot,now,rules,require_social=True):
     try:
         history=snapshot.get('candle_history')
         if not isinstance(history,dict) or not isinstance(history.get('candles'),list):
@@ -50,7 +50,7 @@ def assess_trend_pullback(snapshot,now,rules):
         if not chart['passed']:
             return {'action':'reject','reasons':chart['reasons']}
         social=social_interest(snapshot,now,rules)
-        if not social['present']:
+        if require_social and not social['present']:
             return {'action':'reject','reasons':['fresh callout interest or watched-wallet buying required']}
         peak_index=max(range(len(rows)),key=lambda index:rows[index]['high'])
         run_bars=min(6,len(rows)-1)
