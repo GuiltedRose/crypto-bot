@@ -42,7 +42,7 @@ class ChartLearningTests(unittest.TestCase):
     def test_early_exit_warms_up_and_ignores_stale_or_incompatible_models(self):
         model=new_weighted_model();row=observation('coin')
         self.assertIsNone(decision(model,row,rules(),.1,2))
-        model.update(task='one_minute_net_continuation',samples=30,wins=15,losses=15,trades=5)
+        model.update(task='one_minute_net_continuation',samples=30,wins=15,losses=15,trades=5,evaluation={'approved':True})
         model['weights']['output_weights']=[0.]*8;model['weights']['output_bias']=-8
         self.assertEqual(decision(model,row,rules(),.1,2)['reason'],'neural early profit exit')
         self.assertEqual(decision(model,row,rules(),-.1,2)['reason'],'neural early loss exit')

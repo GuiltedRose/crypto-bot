@@ -1,3 +1,7 @@
+> Current scope: meme trading and neural research. The earlier non-meme
+> portfolio/strategy/arbitrage runners were removed. Any references to those
+> experiments below describe historical work; use README.md for current commands.
+
 # Meme trader conversion
 
 Active entry correction: `momentum_reclaim_enabled: true` requires an upward
@@ -1367,3 +1371,40 @@ also journaled for training. Paper receives modeled costs and unavailable risk
 fields remain unknown. Entry and continuation networks share this schema. The
 old schema is not reused; restart paper to produce compatible weights before
 restarting live. Live remains user controlled and retrains only in its cooldown.
+
+### Position-grouped exit evaluation and model lifecycle
+
+`exit_evaluation.py` is shared by paper and live learning refreshes. It preserves
+all valid quote samples and archived outcomes. It freezes challenger weights
+using an initial chronological 70% training-position prefix, then purges any
+holdout position whose entry overlaps the training cutoff. A position and all
+its continuation labels stay together. Later challengers train on available
+history after consuming a block and must wait for new later positions.
+
+Evaluation uses the first ten later comparable, rule-closed positions. Neural
+closures lack a known rule-only counterfactual and are excluded from outcome
+comparisons. The first predicted early-exit quote is compared with the recorded
+rule-close net P&L; absent an early exit, the rule result is retained. Quotes are
+already net of recorded modeled costs. No missing future quote, replacement
+fill, reinvestment return or hypothetical rule closure is fabricated.
+
+Exit-action accuracy (using the unchanged 1/3 exit threshold) and Brier scores
+first average within position, then across positions.
+The comparator is the previous champion, or holding for the rule-based exit.
+A challenger needs at least three changed exits, positive selected net P&L, a
+positive approximate lower bound on mean matched improvement, no worse replay
+drawdown and no worse accuracy/Brier score. These are screening metrics; correlated
+positions and quote/fill differences limit conclusions about future returns.
+
+Promoted champions are monitored on fresh five-position blocks; negative paired
+improvement restores the previous champion or disables neural exits in favor of
+rules. Corrections to training observations invalidate affected models. Repeated
+polls cannot consume or retry the same evaluation block. Models and lifecycle
+history persist in `<state-dir>/exit_evaluation.json`; unchanged inputs are cached.
+
+Only an approved champion can request neural exits. Existing stop/target/time,
+liquidity, slippage, fee, inventory and positive-minimum-proceeds controls remain
+mandatory. Live refresh remains restricted to its loss cooldown; no execution is
+started by evaluation. Paper-qualified replay evidence is not live profitability.
+The compact paper console labels OOS challenger metrics and post-promotion
+monitoring separately from training-label counts.

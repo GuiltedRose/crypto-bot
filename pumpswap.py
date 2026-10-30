@@ -16,8 +16,8 @@ from solders.message import MessageV0, to_bytes_versioned
 from solders.transaction import VersionedTransaction
 from solders.signature import Signature
 from solders.hash import Hash
-from bot import SOL_MINT
-from market import USDC_MINT
+from meme_dip import SOL_MINT
+from meme_dip import USDC_MINT
 from wallet import MAINNET_GENESIS
 
 PROGRAM = Pubkey.from_string('pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA')

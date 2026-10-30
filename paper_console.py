@@ -40,11 +40,21 @@ def format_report(report,events=()):
             f" | paper {sources.get('bot_paper',0)} · live {sources.get('bot_live',0)} · wallets {sources.get('followed_wallet',0)}")
         exit_model=training.get('exit_model')
         if exit_model is not None:
-            eligible=(exit_model['samples']>=30 and exit_model['trades']>=5
-                and min(exit_model['wins'],exit_model['losses'])>=5)
             lines.append(f"EXIT NN | {exit_model['samples']}/30 quote pairs · {exit_model['trades']}/5 positions"
                 f" | labels {exit_model['wins']} improving / {exit_model['losses']} worsening or flat"
-                f" | {'eligible' if eligible else 'collecting data'}")
+                f" | {exit_model.get('evaluation',{}).get('status','collecting data')}")
+            evaluation=exit_model.get('evaluation',{})
+            metrics=evaluation.get('oos',{})
+            accuracy=metrics.get('accuracy')
+            if accuracy is not None:
+                lines.append(f"EXIT OOS challenger | {metrics['positions']} positions · accuracy {accuracy:.1%}"
+                    f" · Brier {metrics['brier']:.3f} · net vs rules ${metrics['neural_vs_rule_usd']:+.2f}"
+                    f" | rollbacks {evaluation.get('rollbacks',0)} | quote replay")
+            elif evaluation:
+                lines.append('EXIT OOS | awaiting later rule-closed positions; no validated improvement yet')
+            monitoring=evaluation.get('monitoring',{})
+            if monitoring:
+                lines.append(f"EXIT MONITOR | {monitoring['positions']} positions · net vs prior ${monitoring['net_improvement_usd']:+.2f}")
     if blockers and not remaining:
         lines.append('WATCH | '+'; '.join(f'{reason} ({count})' for reason,count in blockers.most_common(2)))
     return '\n'.join(lines)

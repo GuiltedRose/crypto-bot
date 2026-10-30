@@ -122,8 +122,8 @@ class MemeLiveStore:
         live,_,failures,_=live_outcomes(self.directory/'meme_live.sqlite')
         paper=paper_outcomes(self.learning_paper_db)[0] if self.learning_paper_db and self.learning_paper_db.exists() else []
         model=train_shared_model(outcomes,live,paper)
-        from neural_exits import train
-        model['exit_model']=train([self.directory/'meme_live.sqlite',self.learning_paper_db])
+        from exit_evaluation import update
+        model['exit_model']=update([self.directory/'meme_live.sqlite',self.learning_paper_db],self.directory/'exit_evaluation.json')
         if self.state.get('learning_model_live')!=model:
             self.state['learning_model_live']=model
             self.save(record_event,{'version':model['version'],

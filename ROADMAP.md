@@ -1,56 +1,33 @@
-# Trading roadmap
+# Meme trading roadmap
 
-## Current small-capital phase
+## Current scope
 
-- Spot only: buy approved tokens and sell actual owned balances. No borrowed
-  shorts, perps, tokenized stocks or automatic copying of trader wallets.
-- Broaden token discovery beyond SOL: ATLAS, AFKHERO, protocol tokens and
-  screened established meme candidates are listed in `assets.json` (24 mints).
-- Multi-token live portfolio routing is implemented: direct PumpSwap for SOL
-  and keyless Jupiter for the other approved assets, with mint-specific
-  accounting, account/rent costs and reconciliation. Fresh history, screening
-  and executable cost checks still determine which assets can enter now.
-- Retain startup sizing, stop/take-profit, promotion/demotion and review halt.
-  Unknown/new tokens do not become eligible merely through a profile mention.
+- Pump meme momentum/pullback entries, spot inventory only.
+- Persistent paper trading with shared-bankroll positions and audited virtual resets.
+- Recorded public market/wallet observations, entry and continuation networks.
+- Position-grouped chronological evaluation, rule-exit comparisons and exit
+  champion/challenger selection with rollback.
+- Optional locally signed meme execution, with durable pending-order recovery,
+  simulation, fee reserves and unchanged position/drawdown/exit controls.
+- Live execution stays inactive during the current paper-validation phase.
 
-## Future phase at $5,000 account capital
+## Retired experiments
 
-User wants to broaden the meme-token universe, including newer launches, and
-consider a dedicated sniping algorithm. This is future work, not an existing
-strategy or an automatic deployment switch. Establish capital measurement,
-strategy/routing support and applicable risk checks before implementation.
-The separate maximum of two simultaneous meme-token positions still applies.
-The $5,000 milestone does not authorize removing all exposure limits or blindly
-signing launch transactions. No sniping or new-launch execution is enabled now.
+The earlier hourly portfolio runner, Donchian/EMA/RSI and alternative candle
+strategies, short research, Jupiter/Orca routes, and atomic arbitrage have been
+removed. Their execution launchers and unused strategy/history modules are gone.
+Shared RPC, signing, account validation and journal code remain. Existing state,
+valid training samples, and historical outcomes have not been deleted.
 
-## Candidate discovery from public profiles
+## Next evidence
 
-The supplied profile `4ugDhHJ8XDXAeABmrNmGffFaLbJb9BkPyiFGVSV9ocwo` is a
-read-only candidate source. An inspection found 663 standard-SPL held/received
-mints, many unidentified; only JUP overlapped the current registry. This does
-not verify market value, profitable trade intent or ranking; holdings may
-include unsolicited tokens. No candidate was automatically approved and no
-orders/position sizes were copied. Reports are in `data/discovery/`.
+- Accumulate later complete positions for frozen exit-model comparisons.
+- Compare position-weighted accuracy and net quote-replay outcomes against
+  existing rule exits; keep paper and confirmed-live evidence distinct.
+- Continue checking slippage, quote coverage and model drift. More samples or
+  passing tests do not establish profitability.
+- Keep new-launch discovery separate from established meme research. Its exact
+  $5,000 verified-equity gate and independent adapter requirements remain.
 
-## Autonomous multi-strategy improvement
-
-Implemented a bounded registry of Donchian breakout, EMA trend and RSI recovery
-strategies, sharing the existing live portfolio risk controls. A separate
-credential-free worker archives history, tests one challenger against later
-validation/holdout data, records decisions and can activate qualified profiles
-for new entries. Deteriorating replacements roll back without clearing halts.
-No unrestricted code rewriting, risk optimization or unsupported profitability
-claims. Insufficient evidence keeps the incumbent live strategy.
-
-
-## Additional strategies and venue review
-
-Added Bollinger reversion, session VWAP pullback, volatility squeeze, structural
-range and volume momentum challengers. Verified volume/liquidity coverage is
-required where appropriate. Direct Orca/PumpSwap SOL/USDC atomic arbitrage now
-has a locally validated one-transaction build/simulate/sign/reconcile path.
-New Jupiter and Raydium entries are excluded by the U.S. venue review.
-
-Expanded established-meme allowlist remains independent of sniping capital.
-Automatic confirmed new-pool discovery unlocks at $5,000; candidates require
-separate approval and the sniping execution adapter remains future work.
+See MEME_TRADER.md for current policy and research/neural_network_review.md for
+neural architecture and evaluation limitations.

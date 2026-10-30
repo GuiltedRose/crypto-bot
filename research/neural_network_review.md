@@ -20,3 +20,9 @@ and invalidates v1 candidates rather than mixing training policies.
 Model v4 uses class-normalized full-batch training and completed-chart features.
 An independent continuation network learns from recorded one-minute changes in
 net position quotes; it is a predictive association, not causal loss analysis.
+
+Exit models now require frozen, chronological position-grouped OOS evaluation
+and champion approval. Matching rule-close outcomes provide estimated paired
+net improvements; neural-closed positions without a rule baseline are excluded.
+All valid historical data remains available, and worsening champions roll back.
+See MEME_TRADER.md for the lifecycle and quote-replay limitations.

@@ -24,7 +24,7 @@ def record(db,trade_id,snapshot,rules,net_pnl,cost):
             (trade_id,int(snapshot['observed_at']//60),snapshot['observed_at'],json.dumps(context,allow_nan=False),net_pnl))
 
 
-def train(paths):
+def load_groups(paths):
     groups=defaultdict(list)
     for path in dict.fromkeys(str(Path(p).resolve()) for p in paths if p and Path(p).exists()):
         db=sqlite3.connect('file:'+path+'?mode=ro',uri=True)
@@ -38,21 +38,35 @@ def train(paths):
                 if any(trade.startswith(run+':') for run in invalid_runs):continue
                 groups[(path,trade)].append((at,json.loads(raw),net))
         finally:db.close()
+    return groups
+
+
+def samples_for(groups):
     samples=[]
     for quotes in groups.values():
         for i,(at,context,net) in enumerate(quotes):
             future=next((row for row in quotes[i+1:] if 60<=row[0]-at<=180),None)
             if future:
                 samples.append((list(model_features(context).values()),int(future[2]>net)))
+    return samples
+
+
+def train_groups(groups):
+    samples=samples_for(groups)
     model=new_weighted_model()
     model['weights']=fit_balanced(model['weights'],samples)
     model.update(samples=len(samples),wins=sum(label for _,label in samples),
-                 losses=sum(not label for _,label in samples),trades=len(groups),task='one_minute_net_continuation')
+                 losses=sum(not label for _,label in samples),trades=sum(bool(samples_for({key:quotes})) for key,quotes in groups.items()),task='one_minute_net_continuation')
     return model
+
+
+def train(paths):
+    return train_groups(load_groups(paths))
 
 
 def decision(model,snapshot,rules,net,cost):
     if not model or model.get('task')!='one_minute_net_continuation' or model['samples']<30 or min(model['wins'],model['losses'])<5 or model.get('trades',0)<5:return None
+    if not model.get('evaluation',{}).get('approved'):return None
     if not any(chart_features(snapshot)):return
     context=decision_context(snapshot,rules,notional_usd=cost)
     context['position_net_fraction']=net/max(cost,1e-9)

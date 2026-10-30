@@ -4,7 +4,7 @@ from config import LiveConfig
 from wallet import load_wallet
 from live import Rpc
 from pumpswap import PumpSwap
-from bot import SOL_MINT
+from meme_dip import SOL_MINT
 
 
 def main():

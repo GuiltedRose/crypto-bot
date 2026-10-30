@@ -13,14 +13,14 @@ samples do not establish profitability.
 | --- | --- | --- |
 | Paper trading | `run_paper.py`, `run_paper_compare.py` | Simulates trades with virtual balances, modeled costs, persistent state, and strategy comparisons. |
 | Meme trading | `run_meme_live.py` | Evaluates Pump momentum/pullback/reclaim setups. Defaults to unsigned simulation; `--execute` enables real transactions. |
-| Portfolio trading | `run_live.py` | Runs the separate hourly spot strategy and reconciles orders against Solana. This runner can submit real transactions. |
-| Observation | `collect_pool.py`, `wallet_watch.py`, `wallet_signals.py` | Collects market data and public activity from saved wallets. Observations provide research context rather than copying positions. |
-| Research and learning | `improve.py`, `meme_learning.py`, `neural_network.py`, `neural_autonomy.py` | Evaluates strategy candidates, trains neural weights, and qualifies frozen models before they influence entries. |
+| Observation | `pump_market.py`, `wallet_watch.py`, `wallet_signals.py` | Collects market data and public activity from saved wallets. Observations provide research context rather than copying positions. |
+| Research and learning | `meme_learning.py`, `neural_network.py`, `exit_evaluation.py`, `neural_autonomy.py` | Evaluates strategy candidates, trains neural weights, and qualifies frozen models before they influence entries. |
 | Manual-wallet research | `run_manual_research.py` | Archives wallet receipts separately from bot performance. |
 
-Strategy research includes Donchian breakouts, EMA trends, RSI recovery,
-Bollinger and range setups, VWAP, volatility squeezes, and volume signals.
-Available code is not necessarily enabled or qualified for live trading.
+The project now focuses on meme-coin momentum/pullback setups and neural exit
+research. The earlier hourly portfolio, breakout/EMA/RSI, VWAP/range/squeeze,
+short-strategy and atomic-arbitrage experiments have been removed. Historical
+outcome journals remain intact for research and reconciliation.
 
 ## Learning and autonomy
 
@@ -60,8 +60,8 @@ and [network review](research/neural_network_review.md).
 Chart inputs now include completed-candle returns, drawdown from the recent
 peak, volume change, and bearish-candle frequency. A separate exit network
 learns one-minute changes in recorded net liquidation quotes while positions
-are held. After 30 labeled pairs across at least five positions, with examples
-of both directions, it may suggest an earlier exit. Existing stops and time
+are held. After sufficient training data and a successful position-grouped out-of-sample
+comparison, its champion may suggest an earlier exit. Existing stops and time
 limits take priority; live early-profit exits require positive minimum net
 proceeds. Missing or stale chart data disables this optional signal.
 These quote-based labels show associations, not causes or guaranteed fills.
@@ -72,6 +72,19 @@ explicit indicators. Live entry inference runs after on-chain checks and swap
 simulation, so those results participate in its decision. Paper uses its modeled
 costs and leaves unavailable chain observations unknown. It does not treat raw
 provider claims or unavailable data as verified evidence.
+
+Exit evaluation freezes a challenger and tests it on chronologically later,
+whole positions; overlapping train/test positions are purged. Only positions
+with a known rule-based close support the exit-outcome comparison. The console
+shows position-weighted accuracy, Brier score, estimated net improvement versus
+rules, champion status and rollback counts. These are out-of-sample quote-replay
+metrics, not actual counterfactual fills or proof of live profitability.
+
+Exit champions require positive improvement with no worse replay drawdown or
+prediction metrics. Later deterioration rolls back to the previous champion,
+or to rule-based exits. All valid historical samples stay in the ledgers;
+consumed evaluation blocks can train later challengers, which need fresh tests.
+Evaluation state is saved in `exit_evaluation.json`. Unchanged data is cached.
 
 ## Getting started
 
@@ -167,7 +180,6 @@ To explicitly enable real meme trades:
 .venv/bin/python run_meme_live.py --execute --loop
 ```
 
-The separate `run_live.py` portfolio runner can also submit real transactions.
 Use one live runner per wallet. Exit monitoring requires the process and network
 to remain available; stopping the runner does not liquidate an open position.
 Preserve `state/` when orders or positions need reconciliation. To check an

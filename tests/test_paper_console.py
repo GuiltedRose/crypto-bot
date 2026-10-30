@@ -31,3 +31,13 @@ class PaperConsoleTests(unittest.TestCase):
             self.assertIn(part,text)
         report['source_status']={'learning_error':'ValueError'}
         self.assertIn('NN cached',format_report(report))
+
+    def test_position_grouped_evaluation_and_rollback_are_visible(self):
+        report={'marked_equity_usd':6,'neural_training':{'samples':100,'wins':30,'losses':70,
+            'exit_model':{'samples':50,'wins':20,'losses':30,'trades':8,
+                'evaluation':{'status':'champion','approved':True,'rollbacks':1,
+                    'oos':{'positions':10,'accuracy':.8,'brier':.12,'neural_vs_rule_usd':.5}}}}}
+        text=format_report(report)
+        for value in ('EXIT OOS challenger','10 positions','accuracy 80.0%','Brier 0.120',
+                      'net vs rules $+0.50','rollbacks 1','quote replay'):
+            self.assertIn(value,text)

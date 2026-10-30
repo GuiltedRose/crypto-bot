@@ -15,8 +15,8 @@ import time
 from pathlib import Path
 from solders.pubkey import Pubkey
 from pumpswap import IDL,TYPES,PROGRAM,decode_struct,decode_account,pda
-from bot import SOL_MINT
-from market import USDC_MINT
+from meme_dip import SOL_MINT
+from meme_dip import USDC_MINT
 from sniping import CAPITAL_THRESHOLD_USD
 from live import Rpc
 

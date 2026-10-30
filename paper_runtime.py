@@ -235,8 +235,8 @@ class PaperSession:
             from wallet_watch import followed_wallet_outcomes
             external=followed_wallet_outcomes(wallet_db,wallets)
         model=train_shared_model(external,live,paper)
-        from neural_exits import train
-        model['exit_model']=train([self.directory/'paper.sqlite',live_db])
+        from exit_evaluation import update
+        model['exit_model']=update([self.directory/'paper.sqlite',live_db],self.directory/'exit_evaluation.json')
         document={'model':model,'qualification':'paper_training_only_not_live_validation'}
         target=self.directory/'learning.json'
         raw=json.dumps(document,allow_nan=False,sort_keys=True)
@@ -247,7 +247,8 @@ class PaperSession:
         self.learning_summary={'version':model['version'],'samples':model['samples'],
             'wins':model['wins'],'losses':model['losses'],'source_samples':model['source_samples'],
             'class_balance':model.get('class_balance',{}),
-            'exit_model':{key:model['exit_model'].get(key,0) for key in ('samples','wins','losses','trades')}}
+            'exit_model':{**{key:model['exit_model'].get(key,0) for key in ('samples','wins','losses','trades')},
+                'evaluation':model['exit_model'].get('evaluation',{})}}
         return self.learning_summary
 
     def auto_reset_if_exhausted(self):
