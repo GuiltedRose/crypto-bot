@@ -144,7 +144,7 @@ class PaperSession:
                 from meme_learning import decision_context
                 from neural_autonomy import learning_decision
                 model=getattr(self,'learning_model',None)
-                context=decision_context(snapshot,candidate.rules,signal={'metrics':event.get('signal_metrics',{})},weighted_model=model)
+                context=decision_context(snapshot,candidate.rules,signal={'metrics':event.get('signal_metrics',{})},weighted_model=model,notional_usd=event.get('budget_usd'))
                 decision=learning_decision(model,context) if getattr(self,'neural_mode','shadow')=='learning' else {'allow':True,'status':'shadow'}
                 if not decision['allow']:
                     # Keep an unbiased exploration stream without inventing fills.

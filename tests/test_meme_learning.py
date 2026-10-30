@@ -107,6 +107,22 @@ class BotLearningTests(unittest.TestCase):
         self.assertEqual(positive['class_weight'],2*negative['class_weight'])
         self.assertFalse(negative['target_net_positive'])
 
+    def test_context_includes_cost_and_risk_inputs_with_missingness(self):
+        from meme_learning import model_features,MODEL_FEATURES
+        row=snapshot();row['liquidity_usd']=100000
+        row['execution']={'network_fee_sol':.000005,'sol_price_usd':100,'fee_per_side':.0125,
+                          'entry_rent_sol':.001,'rent_is_refundable':False}
+        context=decision_context(row,DipRules(),risk={'largest_sampled_owner_pct':12},notional_usd=2)
+        features=model_features(context)
+        self.assertEqual(len(features),len(MODEL_FEATURES))
+        self.assertEqual(features['network_cost_fraction_known'],1)
+        self.assertEqual(features['setup_cost_fraction_known'],1)
+        self.assertEqual(features['largest_sampled_owner_pct_known'],1)
+        self.assertEqual(features['top10_sampled_owners_pct_known'],0)
+        changed=model_features(dict(context,onchain_risk={'largest_sampled_owner_pct':0}))
+        self.assertNotEqual(features['largest_sampled_owner_pct'],changed['largest_sampled_owner_pct'])
+        self.assertEqual(changed['largest_sampled_owner_pct_known'],1)
+
     def test_only_followed_wallet_outcomes_train_the_live_model(self):
         context={'followed_wallet_features':{'buy_size_quote':.2,'prior_win_rate':.6}}
         outcomes=[{'wallet':'followed-a','mint':'coin','entry_context':context,

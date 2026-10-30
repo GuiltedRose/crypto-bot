@@ -14,7 +14,7 @@ from neural_network import fit_balanced
 def record(db,trade_id,snapshot,rules,net_pnl,cost):
     if snapshot.get('synthetic') is True:return
     if not any(chart_features(snapshot)):return
-    context=decision_context(snapshot,rules)
+    context=decision_context(snapshot,rules,notional_usd=cost)
     context['position_net_fraction']=net_pnl/max(cost,1e-9)
     with db:
         db.execute('''CREATE TABLE IF NOT EXISTS neural_position_quotes(
@@ -54,7 +54,7 @@ def train(paths):
 def decision(model,snapshot,rules,net,cost):
     if not model or model.get('task')!='one_minute_net_continuation' or model['samples']<30 or min(model['wins'],model['losses'])<5 or model.get('trades',0)<5:return None
     if not any(chart_features(snapshot)):return
-    context=decision_context(snapshot,rules)
+    context=decision_context(snapshot,rules,notional_usd=cost)
     context['position_net_fraction']=net/max(cost,1e-9)
     try:prediction=weighted_prediction(model,context)
     except (ValueError,KeyError,TypeError):return None

@@ -14,6 +14,12 @@ MODEL_FEATURES=('buy_sell_balance','turnover_vs_liquidity','candle_range',
                 'impulse_strength','pullback_depth','reclaim_volume',
                 'followed_wallet_buy_size','followed_wallet_prior_win_rate',
                 'followed_wallet_activity','chart_return','chart_drawdown','chart_volume_change','chart_bearish_fraction','position_net_fraction')
+CONTEXT_SCALES={
+    'liquidity_usd':1000000.,'buy_volume_usd':100000.,'buy_volume_coverage_pct':100.,
+    'fee_per_side':.05,'network_cost_fraction':.1,'setup_cost_fraction':.1,'slippage_per_side':.05,
+    'largest_sampled_owner_pct':100.,'top10_sampled_owners_pct':100.,
+    'busiest_buyer_share':1.,'busiest_slot_buy_share':1.}
+MODEL_FEATURES+=tuple(name for field in CONTEXT_SCALES for name in (field,field+'_known'))
 MODEL_LEARNING_RATE=.15
 MODEL_L2=.01
 POSITIVE_OUTCOME_MULTIPLIER=2.
@@ -104,9 +110,16 @@ def model_features(context):
     win_rate=wallet.get('prior_win_rate')
     prior_rate=0. if not _finite(win_rate) else max(-1.,min(1.,2*win_rate-1))
     activity=bounded(wallet.get('activity_count'),3.)
-    return dict(zip(MODEL_FEATURES,(balance,turnover,candle,impulse,pullback,reclaim,
+    values=(balance,turnover,candle,impulse,pullback,reclaim,
                                     buy_size,prior_rate,activity,*chart_features(context),
-        max(-1.,min(1.,context.get('position_net_fraction',0.)/.25)))))
+        max(-1.,min(1.,context.get('position_net_fraction',0.)/.25)))
+    extra=context.get('market_context',{})
+    risk=context.get('onchain_risk') or {}
+    for field,scale in CONTEXT_SCALES.items():
+        value=extra.get(field,context.get(field,risk.get(field)))
+        known=_finite(value) and value>=0
+        values+=(max(-1.,min(1.,2*value/scale-1)) if known else 0.,float(known))
+    return dict(zip(MODEL_FEATURES,values))
 
 
 def _followed_entry_features(snapshot,model):
@@ -182,7 +195,7 @@ def update_weighted_model(model,context,net_pnl_usd,trade_signature=None):
         'training_samples':updated['samples']}
 
 
-def decision_context(snapshot,rules,scorecard=None,signal=None,risk=None,entry_profile=None,weighted_model=None):
+def decision_context(snapshot,rules,scorecard=None,signal=None,risk=None,entry_profile=None,weighted_model=None,notional_usd=None,execution_features=None):
     fields=('mint','pool','observed_at','price_usd','market_kind','buy_volume_usd','sell_volume_usd','liquidity_usd',
             'buy_volume_window_seconds','buy_volume_coverage_pct')
     context={key:snapshot.get(key) for key in fields}
@@ -200,6 +213,18 @@ def decision_context(snapshot,rules,scorecard=None,signal=None,risk=None,entry_p
              'busiest_buyer_share','busiest_slot_buy_share')}
     else:
         context['onchain_risk']=None
+    execution=snapshot.get('execution',{})
+    execution=execution if isinstance(execution,dict) else {}
+    network=execution.get('network_fee_sol');sol=execution.get('sol_price_usd')
+    fee=execution.get('fee_per_side')
+    rent=execution.get('entry_rent_sol')
+    setup=0. if execution.get('rent_is_refundable') is True else rent
+    context['market_context']={key:snapshot.get(key) for key in
+        ('liquidity_usd','buy_volume_usd','buy_volume_coverage_pct')}
+    context['market_context'].update(fee_per_side=fee,slippage_per_side=rules.slippage_per_side,
+        network_cost_fraction=network*sol/notional_usd if all(_finite(v) for v in (network,sol,notional_usd)) and notional_usd>0 else None,
+        setup_cost_fraction=setup*sol/notional_usd if all(_finite(v) for v in (setup,sol,notional_usd)) and notional_usd>0 else None)
+    if execution_features:context['market_context'].update(execution_features)
     context['shadow_prediction']=weighted_prediction(weighted_model,context) if weighted_model else None
     context['limits']={key:getattr(rules,key) for key in (
         'position_fraction','take_profit_fraction','max_loss_fraction','max_position_usd',

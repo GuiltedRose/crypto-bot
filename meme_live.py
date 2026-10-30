@@ -366,26 +366,6 @@ class MemeLiveEngine:
                 return {'status':'historical_loss_cohort_block',
                         'reason':'Confirmed live outcomes show negative expectancy in this market context',
                         'feedback':adverse,'signal':signal}
-            from neural_autonomy import entry_decision
-            frozen=self.store.state.get('neural_autonomy',{}).get('candidate',{}).get('model')
-            neural_context=decision_context(snapshot,entry_rules,assessment,signal,
-                entry_profile=profile_name,weighted_model=frozen)
-            neural_decision=entry_decision(self.store.state.get('neural_autonomy'),neural_context)
-            adaptive_decision=None
-            if getattr(self,'neural_mode','qualified') in ('active','learning'):
-                from neural_autonomy import learning_decision
-                adaptive_context=decision_context(snapshot,entry_rules,assessment,signal,
-                    entry_profile=profile_name,weighted_model=self.store.state.get('learning_model_live'))
-                adaptive_decision=learning_decision(self.store.state.get('learning_model_live'),adaptive_context)
-                if getattr(self,'neural_mode','qualified')=='active':
-                    adaptive_decision=dict(adaptive_decision,status='active_inference',
-                        allow=adaptive_decision['allow'] and adaptive_decision['status']!='warming_up')
-                allowed=adaptive_decision['allow']
-            else:
-                allowed=neural_decision['allow'] if getattr(self,'neural_mode','qualified')=='qualified' else True
-            if not allowed:
-                self.store.save('neural_entry_veto',adaptive_decision or neural_decision)
-                return {'status':'neural_entry_veto','neural_selection':adaptive_decision or neural_decision}
             bar=int(snapshot['candle_history']['candles'][-1]['timestamp'])
             used=self.store.db.execute('SELECT bar FROM bars WHERE mint=? AND pool=?',(snapshot['mint'],snapshot['pool'])).fetchone()
             if used and used[0]>=bar: return {'status':'already_entered_on_completed_candle'}
@@ -444,10 +424,35 @@ class MemeLiveEngine:
             setup=(simulated['rent_lamports']-simulated.get('recoverable_rent_lamports',0))/1e9*sol_price
             round_trip=(2*simulated['fee_lamports']/1e9*sol_price+units/1e9*sol_price*2*(market['fee_bps']/10000+self.rules.slippage_per_side))
             if round_trip+setup>=loss_limit: return {'status':'estimated_costs_exceed_loss_budget'}
+        execution_features={'fee_per_side':market['fee_bps']/10000,
+            'network_cost_fraction':simulated['fee_lamports']/units,
+            'setup_cost_fraction':max(0,simulated['rent_lamports']-simulated.get('recoverable_rent_lamports',0))/units} if side=='buy' else None
+        if side=='buy':
+            from neural_autonomy import entry_decision
+            frozen=self.store.state.get('neural_autonomy',{}).get('candidate',{}).get('model')
+            neural_context=decision_context(snapshot,entry_rules,assessment,signal,
+                risk=risk_report,entry_profile=profile_name,weighted_model=frozen,notional_usd=units/1e9*sol_price,execution_features=execution_features)
+            neural_decision=entry_decision(self.store.state.get('neural_autonomy'),neural_context)
+            adaptive_decision=None
+            if getattr(self,'neural_mode','qualified') in ('active','learning'):
+                from neural_autonomy import learning_decision
+                adaptive_context=decision_context(snapshot,entry_rules,assessment,signal,
+                    risk=risk_report,entry_profile=profile_name,weighted_model=self.store.state.get('learning_model_live'),notional_usd=units/1e9*sol_price,execution_features=execution_features)
+                adaptive_decision=learning_decision(self.store.state.get('learning_model_live'),adaptive_context)
+                if getattr(self,'neural_mode','qualified')=='active':
+                    adaptive_decision=dict(adaptive_decision,status='active_inference',
+                        allow=adaptive_decision['allow'] and adaptive_decision['status']!='warming_up')
+                allowed=adaptive_decision['allow']
+            else:
+                allowed=neural_decision['allow'] if getattr(self,'neural_mode','qualified')=='qualified' else True
+            if not allowed:
+                self.store.save('neural_entry_veto',adaptive_decision or neural_decision)
+                return {'status':'neural_entry_veto','neural_selection':adaptive_decision or neural_decision}
         from meme_learning import decision_context
         context_record=decision_context(snapshot,self.rules,assessment if side=='buy' else None,
             signal if side=='buy' else None,risk_report,profile_name,
-            self.store.state.get('learning_model_live') if side=='buy' else None)
+            self.store.state.get('learning_model_live') if side=='buy' else None,
+            notional_usd=units/1e9*sol_price,execution_features=execution_features)
         if side=='buy':
             context_record['neural_selection']=neural_decision
             if adaptive_decision: context_record['adaptive_selection']=adaptive_decision

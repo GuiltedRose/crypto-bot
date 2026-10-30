@@ -267,7 +267,7 @@ that fee to USDC.
 The learner uses bounded feature weights and inverse-frequency class weights.
 Its features use followed-wallet buy size, the count of current followed-wallet
 buyers, and each wallet's prior closed-cycle win rate. It does not claim to
-learn candle/market effects from those wallet-only labels. It is a 14-input, 8-hidden-unit tanh network with a sigmoid binary output,
+learn candle/market effects from those wallet-only labels. It is a 36-input, 8-hidden-unit tanh network with a sigmoid binary output,
 trained by manual backpropagation and weighted binary cross entropy. Its dense
 math is adapted from the imported AI tool; the hidden gradient uses the old
 output weights, correcting the original update-order bug. Initialization is
@@ -1325,7 +1325,7 @@ scans; it retrains only while flat during the consecutive-loss cooldown (current
 one hour). Paper training is independent and continues between its scans.
 Exits, reserves, position limits, signal and execution checks remain mandatory.
 
-### Class balance and recorded chart exits (model v3)
+### Class balance and recorded chart exits (model v4)
 
 Entry, followed-wallet and exit networks use full-batch class-normalized gradients:
 positive examples collectively carry mass 2 and negative examples mass 1,
@@ -1351,6 +1351,19 @@ live simulation, slippage and inventory checks remain; early-profit exits must
 have positive minimum net proceeds. Incompatible models or missing chart data
 leave original exits operational. Paper shadow mode does not use neural exits.
 Live retraining remains restricted to its loss cooldown; paper refreshes between
-scans. Model v3 rebuilds weights for the expanded feature schema. Restart paper
+scans. Model v4 rebuilds weights for the expanded feature schema. Restart paper
 first to produce compatible weights; active live mode blocks entries if none
 are available, while existing position exits remain operational.
+
+### Decision context completeness (model v4)
+
+The 36-value input schema adds liquidity, buy volume/coverage, fees, network and
+setup costs relative to notional, slippage and available on-chain owner/buyer/slot
+concentration. Every added measurement has a known/missing indicator. Explicit
+zero differs from unknown. All inputs are bounded and use data available at the
+decision time; raw provider popularity/identity claims do not become verified facts.
+Live inference now runs after risk checks and simulation, with their final data
+also journaled for training. Paper receives modeled costs and unavailable risk
+fields remain unknown. Entry and continuation networks share this schema. The
+old schema is not reused; restart paper to produce compatible weights before
+restarting live. Live remains user controlled and retrains only in its cooldown.

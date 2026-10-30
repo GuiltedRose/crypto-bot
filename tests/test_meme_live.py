@@ -208,6 +208,19 @@ class EngineTests(unittest.TestCase):
                 self.assertEqual(self.engine.prepare(self.row,100,6.5,1200)['status'],'holding')
         self.assertIsNotNone(self.store.state['position'])
 
+    def test_live_neural_selection_receives_final_risk_and_execution_inputs(self):
+        self.engine.neural_mode='learning'
+        risk={'passed':True,'largest_sampled_owner_pct':5}
+        self.engine.risk_assessor=type('Risk',(),{'assess':lambda *args:risk})()
+        with patch('neural_autonomy.learning_decision',return_value={'allow':True,'status':'learning'}) as select:
+            result=self.engine.prepare(self.row,100,6.5,1200)
+        self.assertEqual(result['status'],'unsigned_simulation_passed')
+        context=select.call_args.args[1]
+        self.assertEqual(context['onchain_risk']['largest_sampled_owner_pct'],5)
+        self.assertEqual(context['market_context']['fee_per_side'],.0125)
+        self.assertGreater(context['market_context']['network_cost_fraction'],0)
+        self.assertEqual(result['intent']['entry_context']['market_context'],context['market_context'])
+
     def test_modeled_paper_execution_flags_cannot_enter_live(self):
         self.row['execution']={'model_only':True}
         with self.assertRaisesRegex(ValueError,'Paper'): self.engine.prepare(self.row,100,6.5,1200)

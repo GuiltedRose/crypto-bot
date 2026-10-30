@@ -66,6 +66,13 @@ limits take priority; live early-profit exits require positive minimum net
 proceeds. Missing or stale chart data disables this optional signal.
 These quote-based labels show associations, not causes or guaranteed fills.
 
+The network uses structured market, saved-wallet, chart, position-return,
+execution-cost and available on-chain concentration inputs. Missing values have
+explicit indicators. Live entry inference runs after on-chain checks and swap
+simulation, so those results participate in its decision. Paper uses its modeled
+costs and leaves unavailable chain observations unknown. It does not treat raw
+provider claims or unavailable data as verified evidence.
+
 ## Getting started
 
 Use Python 3.10 or later. From the repository directory:

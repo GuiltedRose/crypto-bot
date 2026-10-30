@@ -98,6 +98,7 @@ class AutonomyTests(unittest.TestCase):
                 # A shadow score cannot block; the mandatory risk check still does.
                 self.assertEqual(engine.prepare(row,100,6.5,1200)['status'],'onchain_risk_unavailable')
                 state['status']='active'
+                engine.risk_assessor=type('Risk',(),{'assess':lambda *args:{'passed':True}})()
                 self.assertEqual(engine.prepare(row,100,6.5,1200)['status'],'neural_entry_veto')
             finally:store.close()
 
@@ -151,10 +152,12 @@ class AutonomyTests(unittest.TestCase):
                 engine=MemeLiveEngine({},'user',store,policy(),adapter_factory=FakeAdapter)
                 engine.neural_mode='learning'
                 row=setup();row.pop('execution');row['market_kind']='bonding_curve'
+                engine.risk_assessor=type('Risk',(),{'assess':lambda *args:{'passed':True}})()
                 decision=engine.prepare(row,100,6.5,1200)
                 self.assertEqual(decision['status'],'neural_entry_veto')
                 self.assertFalse(decision['neural_selection']['qualified'])
                 model['weights']['output_bias']=8.
+                engine.risk_assessor=None
                 # Positive score never bypasses mandatory execution/risk screening.
                 self.assertEqual(engine.prepare(row,100,6.5,1200)['status'],'onchain_risk_unavailable')
                 engine.neural_mode='off'
