@@ -23,11 +23,36 @@ def positive(value):
     return value
 
 
+def loss_cooldown(db,rules,now):
+    limit=rules.loss_streak_limit
+    rows=db.execute(
+        "SELECT at,body FROM events WHERE kind='confirmed_sell' ORDER BY id DESC LIMIT ?",
+        (limit,)).fetchall()
+    if len(rows)<limit:
+        return None
+    losses=0
+    for _,raw in rows:
+        pnl=json.loads(raw).get('pnl_usd')
+        if isinstance(pnl,bool) or not isinstance(pnl,(int,float)) or not math.isfinite(pnl):
+            raise ValueError('Confirmed sell has invalid P&L for loss-streak feedback')
+        if pnl>=0:
+            break
+        losses+=1
+    if losses<limit:
+        return None
+    cooldown_until=rows[0][0]+rules.loss_streak_cooldown_seconds
+    if now>=cooldown_until:
+        return None
+    return {'consecutive_losses':losses,'cooldown_until':cooldown_until,
+            'remaining_seconds':cooldown_until-now}
+
+
 class MemeLiveStore:
     def __init__(self,directory,user,rules,adopt_rules=False,learning_wallet_db=None,
-                 followed_wallets=(),learning_paper_db=None):
+                 followed_wallets=(),learning_paper_db=None,cooldown_training_only=False):
         self.directory=Path(directory);self.directory.mkdir(parents=True,exist_ok=True)
         self.learning_wallet_db=Path(learning_wallet_db) if learning_wallet_db else None
+        self.cooldown_training_only=cooldown_training_only
         self.learning_paper_db=Path(learning_paper_db) if learning_paper_db else None
         self.followed_wallets=tuple(dict.fromkeys(followed_wallets))
         self.lock=(self.directory/'runner.lock').open('a')
@@ -64,10 +89,24 @@ class MemeLiveStore:
         else:
             self.state=dict(binding=binding,position=None,pending=None,peak_equity=None,halted=False,realized_pnl_usd=0)
             self.save('initialized',{})
-        self.refresh_learning_model(record_event='shadow_learning_initialized')
+        if self.cooldown_training_only:
+            from meme_learning import new_weighted_model,weighted_prediction
+            model=self.state.get('learning_model_live')
+            if model is None and self.learning_paper_db:
+                path=self.learning_paper_db.parent/'learning.json'
+                if path.exists():
+                    model=json.loads(path.read_text())['model']
+                    weighted_prediction(model,{})
+            if model is None: model=new_weighted_model()
+            self.state['learning_model_live']=model
+            self.save('inference_weights_loaded',{'training_samples':model['samples']})
+        else:
+            self.refresh_learning_model(record_event='shadow_learning_initialized')
 
     def refresh_learning_model(self,record_event='shadow_learning_refreshed'):
         if self.state.get('pending') or self.state.get('position'):
+            return self.state.get('learning_model_live')
+        if self.cooldown_training_only and not loss_cooldown(self.db,DipRules(**self.state['binding']['rules']),time.time()):
             return self.state.get('learning_model_live')
         from meme_learning import train_shared_model,live_outcomes,paper_outcomes
         from wallet_watch import followed_wallet_outcomes
@@ -159,27 +198,7 @@ class MemeLiveEngine:
             total_complete=getattr(self,'bankroll_valuation',{}).get('complete',True))
 
     def loss_streak_cooldown(self,now):
-        limit=self.rules.loss_streak_limit
-        rows=self.store.db.execute(
-            "SELECT at,body FROM events WHERE kind='confirmed_sell' ORDER BY id DESC LIMIT ?",
-            (limit,)).fetchall()
-        if len(rows)<limit:
-            return None
-        losses=0
-        for _,raw in rows:
-            pnl=json.loads(raw).get('pnl_usd')
-            if isinstance(pnl,bool) or not isinstance(pnl,(int,float)) or not math.isfinite(pnl):
-                raise ValueError('Confirmed sell has invalid P&L for loss-streak feedback')
-            if pnl>=0:
-                break
-            losses+=1
-        if losses<limit:
-            return None
-        cooldown_until=rows[0][0]+self.rules.loss_streak_cooldown_seconds
-        if now>=cooldown_until:
-            return None
-        return {'consecutive_losses':losses,'cooldown_until':cooldown_until,
-                'remaining_seconds':cooldown_until-now}
+        return loss_cooldown(self.store.db,self.rules,now)
 
     def resolve_expired(self,p,signature):
         """Release only expired buys with unchanged finalized pre-send inventory.
@@ -343,11 +362,14 @@ class MemeLiveEngine:
                 entry_profile=profile_name,weighted_model=frozen)
             neural_decision=entry_decision(self.store.state.get('neural_autonomy'),neural_context)
             adaptive_decision=None
-            if getattr(self,'neural_mode','qualified')=='learning':
+            if getattr(self,'neural_mode','qualified') in ('active','learning'):
                 from neural_autonomy import learning_decision
                 adaptive_context=decision_context(snapshot,entry_rules,assessment,signal,
                     entry_profile=profile_name,weighted_model=self.store.state.get('learning_model_live'))
                 adaptive_decision=learning_decision(self.store.state.get('learning_model_live'),adaptive_context)
+                if getattr(self,'neural_mode','qualified')=='active':
+                    adaptive_decision=dict(adaptive_decision,status='active_inference',
+                        allow=adaptive_decision['allow'] and adaptive_decision['status']!='warming_up')
                 allowed=adaptive_decision['allow']
             else:
                 allowed=neural_decision['allow'] if getattr(self,'neural_mode','qualified')=='qualified' else True

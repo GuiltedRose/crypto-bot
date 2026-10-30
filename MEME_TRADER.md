@@ -195,7 +195,8 @@ not become profit labels before cost/rent reconstruction.
 
 ### Online selection and concurrent paper exploration
 
-Both runners now default to `--neural-mode learning`. Once there are 30 eligible
+Paper defaults to `--neural-mode learning`; live defaults to `--neural-mode active`,
+using saved weights and retraining only inside its loss cooldown. Once there are 30 eligible
 outcomes, the current model may veto entries with scores below 2/3. These scores
 are experimental and uncalibrated; this mode does not wait for prospective
 qualification or claim that it has passed. Live remains one position with its
@@ -1313,3 +1314,13 @@ The override is checkpointed and audited, preserves loss history, and shortens
 an existing wait from its original loss timestamp. It does not loosen live
 entry rules or bypass prospective neural qualification. Console output lists
 recent entry blockers; full wallet context remains in the report.
+
+### Live inference and cooldown training
+
+Live defaults to `--neural-mode active`, using saved weights for entry decisions.
+It loads its own persisted model, or bootstraps from the selected paper ledger
+directory's `learning.json` when no live model exists. Fewer than 30 training
+outcomes blocks active-mode entries. Live never trains at startup or on ordinary
+scans; it retrains only while flat during the consecutive-loss cooldown (currently
+one hour). Paper training is independent and continues between its scans.
+Exits, reserves, position limits, signal and execution checks remain mandatory.

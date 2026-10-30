@@ -99,6 +99,9 @@ def tick(engine,sources,feed,wallets,mints,discover=True,progress=None):
     if progress: progress({'status':'checking_wallet_and_market'})
     if engine.store.state['pending']: return engine.recover()
     engine.store.refresh_learning_model()
+    cooldown=engine.loss_streak_cooldown(time.time())
+    if cooldown and not engine.store.state.get('position'):
+        return {'status':'loss_streak_cooldown','risk':cooldown,'training_samples':engine.store.state.get('learning_model_live',{}).get('samples',0)}
     price=valuation(sources)
     position=engine.store.state['position']
     # Resolve a held mint even if its old bonding curve has migrated. The
@@ -205,7 +208,7 @@ def main():
     parser.add_argument('--risk-rpc',help='Optional HTTPS read-only RPC for indexed holder/trade queries; never receives signed transactions')
     parser.add_argument('--reconcile-only',action='store_true',help='Check the original pending transaction once; never scan, sign or submit a new order')
     parser.add_argument('--adopt-rules',action='store_true',help='Explicitly adopt changed rules only when flat with no unresolved orders; preserves P&L and drawdown halt')
-    parser.add_argument('--neural-mode',choices=['learning','qualified','off'],default='learning',help='Experimental online entry veto (default); qualified requires prospective evidence; off uses rule entries')
+    parser.add_argument('--neural-mode',choices=['active','learning','qualified','off'],default='active',help='Saved-network entry decisions (default); retrains only during loss cooldown; qualified requires prospective evidence')
     parser.add_argument('--profile',choices=['current','moderate','aggressive','adaptive'],help='Shared entry-tolerance profile; dollar limits and slippage are unchanged')
     parser.add_argument('--rules',type=Path,default=Path('meme_live_rules.json'))
     parser.add_argument('--state-dir',type=Path)
@@ -243,7 +246,7 @@ def main():
         parser.error('Use an isolated meme execution directory')
     store=MemeLiveStore(directory,user,rules,adopt_rules=args.adopt_rules,
         learning_wallet_db=args.wallet_source_dir/'wallet_watch.sqlite',
-        followed_wallets=wallets,learning_paper_db=args.learning_paper_db)
+        followed_wallets=wallets,learning_paper_db=args.learning_paper_db,cooldown_training_only=True)
     try:
         # Bind mode as well as wallet/rules: never silently reuse unsigned state
         # (marks, simulated observations) as a funded live experiment.

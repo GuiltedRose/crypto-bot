@@ -161,3 +161,27 @@ class AutonomyTests(unittest.TestCase):
                 model['weights']['output_bias']=-8.
                 self.assertEqual(engine.prepare(row,100,6.5,1200)['status'],'onchain_risk_unavailable')
             finally:store.close()
+
+
+    def test_live_loads_saved_weights_and_trains_only_inside_loss_cooldown(self):
+        import json,tempfile,time
+        from pathlib import Path
+        from unittest.mock import patch
+        from meme_live import MemeLiveStore
+        from meme_dip import DipRules
+        with tempfile.TemporaryDirectory() as root:
+            paper=Path(root)/'paper';paper.mkdir()
+            (paper/'learning.json').write_text(json.dumps({'model':trained()}))
+            with patch('meme_learning.train_shared_model',return_value=trained()) as train:
+                store=MemeLiveStore(Path(root)/'live','user',DipRules(),
+                    learning_paper_db=paper/'paper.sqlite',cooldown_training_only=True)
+                try:
+                    self.assertEqual(store.state['learning_model_live']['samples'],30)
+                    store.refresh_learning_model();train.assert_not_called()
+                    for index in range(2):store.save('confirmed_sell',{'mint':'coin','signature':str(index),'pnl_usd':-.1})
+                    store.refresh_learning_model();train.assert_called_once()
+                    train.reset_mock()
+                    with patch('meme_live.time.time',return_value=time.time()+3601):
+                        store.refresh_learning_model()
+                    train.assert_not_called()
+                finally:store.close()

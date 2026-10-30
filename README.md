@@ -33,12 +33,15 @@ resets; refills, rent returns, voided fills, and synthetic trades are not profit
 labels. Paper results remain modeled data, separate from confirmed live returns.
 
 Paper training refreshes between scans, including while other paper positions
-are open. Live training refreshes while flat so it cannot delay exits. Paper saves its model to
+are open. Live loads saved weights for inference and retrains only while flat inside its
+one-hour consecutive-loss cooldown. It can bootstrap from the paper `learning.json`;
+without at least 30 training outcomes, active mode blocks new entries. Paper saves its model to
 `learning.json` in its state directory; the meme runner rebuilds shared weights
 from the outcome ledgers. Its default paper source is `state/paper_volume/paper.sqlite`.
 
-Both runners default to `--neural-mode learning`: after 30 eligible outcomes,
-the current neural weights may veto otherwise eligible entries below the 2/3
+Paper defaults to `--neural-mode learning`. Live defaults to `--neural-mode active`:
+after 30 eligible outcomes,
+the saved neural weights select among otherwise eligible entries using the 2/3
 score threshold. Live retains its position limit, cooldown, sizing, safety and
 execution checks; neural scores never bypass them. No live process is started
 by training alone.

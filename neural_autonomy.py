@@ -31,7 +31,7 @@ def qualification(candidate,trades,failures=()):
         score=prediction.get('score');pnl=row.get('net_pnl_usd');signature=row.get('exit_signature')
         if (row.get('source')!='bot_live' or prediction.get('candidate_id')!=candidate['id']
             or row.get('entry_at',0)<=candidate['created_at']
-            or context.get('adaptive_selection',{}).get('status')=='learning'
+            or context.get('adaptive_selection',{}).get('status') in ('learning','active_inference')
             or context.get('recorded_before_order') is not True
             or type(score) not in (int,float) or not math.isfinite(score) or not 0<=score<=1
             or type(pnl) not in (int,float) or not math.isfinite(pnl)
