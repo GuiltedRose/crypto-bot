@@ -121,3 +121,17 @@ class AutonomyTests(unittest.TestCase):
                 with patch('meme_learning.train_shared_model',side_effect=AssertionError('must reconcile first')):
                     store.refresh_learning_model()
                 store.close()
+
+
+    def test_positive_weighting_requires_compensated_threshold_and_new_candidate(self):
+        import math
+        state=advance(None,trained(),[],{},0)
+        state['candidate']['model']['weights']['output_weights']=[0.]*8
+        state['candidate']['model']['weights']['output_bias']=math.log(.6/.4)
+        state['status']='active'
+        self.assertFalse(entry_decision(state,{})['allow'])
+        old_id=state['candidate']['id']
+        state['candidate']['model']['version']='online-mlp-v1'
+        changed=advance(state,trained(),[],{},1)
+        self.assertNotEqual(changed['candidate']['id'],old_id)
+        self.assertEqual(changed['status'],'collecting')

@@ -7,7 +7,7 @@ Only JSON parameters cross the persistence boundary; no pretrained artifacts.
 import math
 import random
 
-VERSION='online-mlp-v1'
+VERSION='online-mlp-v2'
 HIDDEN=8
 
 

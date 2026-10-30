@@ -89,7 +89,7 @@ class BotLearningTests(unittest.TestCase):
                 'reclaim_to_pullback_volume_ratio':1.2}}}
         model=new_weighted_model()
         model,win=update_weighted_model(model,context,.2,'exit-1')
-        self.assertTrue(win['updated']);self.assertEqual(win['class_weight'],1)
+        self.assertTrue(win['updated']);self.assertEqual(win['class_weight'],2)
         self.assertGreater(weighted_prediction(model,context)['score'],.5)
         duplicate,skipped=update_weighted_model(model,context,-.2,'exit-1')
         self.assertFalse(skipped['updated']);self.assertEqual(duplicate['samples'],1)
@@ -99,6 +99,13 @@ class BotLearningTests(unittest.TestCase):
         self.assertTrue(loss['updated']);self.assertEqual(model['losses'],1)
         from neural_network import validate
         validate(model['weights'],len(model['feature_names']))
+
+    def test_positive_labels_receive_twice_the_comparable_negative_weight(self):
+        context={'flow_metrics':{'buy_sell_ratio':1.5}}
+        _,positive=update_weighted_model(new_weighted_model(),context,.2,'win')
+        _,negative=update_weighted_model(new_weighted_model(),context,-.2,'loss')
+        self.assertEqual(positive['class_weight'],2*negative['class_weight'])
+        self.assertFalse(negative['target_net_positive'])
 
     def test_only_followed_wallet_outcomes_train_the_live_model(self):
         context={'followed_wallet_features':{'buy_size_quote':.2,'prior_win_rate':.6}}

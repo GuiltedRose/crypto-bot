@@ -15,7 +15,7 @@ MIN_VALIDATION=30
 MIN_SELECTED=20
 MIN_REJECTED=5
 MIN_DAYS=14
-THRESHOLD=.5
+THRESHOLD=2/3  # Compensate for the 2x positive-label training multiplier.
 MAX_AGE=60*86400
 
 
@@ -74,7 +74,8 @@ def advance(previous,model,trades,binding,now,can_activate=True,failures=()):
     candidate=state.get('candidate')
     current_ids=set(model.get('training_ids',[]))
     binding_hash=digest(binding)
-    if candidate and (candidate['binding_hash']!=binding_hash
+    if candidate and (candidate['model'].get('version')!=model.get('version')
+        or candidate['binding_hash']!=binding_hash
         or not set(candidate['model'].get('training_ids',[])).issubset(current_ids)
         or now-candidate['created_at']>MAX_AGE):
         state={'status':'invalidated','reason':'training provenance, policy or model age changed'}

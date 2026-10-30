@@ -16,6 +16,7 @@ MODEL_FEATURES=('buy_sell_balance','turnover_vs_liquidity','candle_range',
                 'followed_wallet_activity')
 MODEL_LEARNING_RATE=.15
 MODEL_L2=.01
+POSITIVE_OUTCOME_MULTIPLIER=2.
 
 
 def _finite(value):
@@ -108,6 +109,7 @@ def _followed_entry_features(snapshot,model):
 def new_weighted_model():
     from neural_network import VERSION,initialize
     return {'version':VERSION,'samples':0,'wins':0,'losses':0,
+            'positive_outcome_multiplier':POSITIVE_OUTCOME_MULTIPLIER,
             'feature_names':list(MODEL_FEATURES),'weights':initialize(len(MODEL_FEATURES)),
             'last_trade_signature':None,'wallet_stats':{}}
 
@@ -141,6 +143,7 @@ def update_weighted_model(model,context,net_pnl_usd,trade_signature=None):
     prior_samples=wins+losses
     class_count=wins if target else losses
     sample_weight=1. if prior_samples==0 else min(3.,prior_samples/(2*max(1,class_count)))
+    sample_weight*=POSITIVE_OUTCOME_MULTIPLIER if target else 1.
     weights,probability=train(model['weights'],list(features.values()),target,
         MODEL_LEARNING_RATE,sample_weight,MODEL_L2)
     updated={**model,'samples':prior_samples+1,'wins':wins+int(target),

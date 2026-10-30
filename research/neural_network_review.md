@@ -10,3 +10,9 @@ Reviewed all source modules and accompanying documentation before removing the i
 - Requirements, ignore rules and guides: reviewed; EEG/scientific framework dependencies and artifacts were not imported. Implementation uses Python standard library only.
 
 The shared model rebuilds from eligible paper closes across all runs, confirmed bot closes and contiguous receipt-backed cycles from configured saved wallets. Completed archived/reset paper wins and losses remain training labels; balance refills are excluded. Paper remains modeled data. The neural score remains shadow-only until prospective frozen-candidate qualification; qualified models may veto entries, never authorize a blocked entry or change risk size. See MEME_TRADER.md for qualification and rollback. Mathematical tests establish backpropagation correctness, not trading profitability or calibrated predictions.
+
+Positive net outcomes receive a 2x multiplier on top of inverse-frequency class
+weights; losses and break-even outcomes retain negative labels. The neural veto
+threshold is 2/3 to compensate for that multiplier, with prospective qualification
+still required. Scores are uncalibrated. Model v2 rebuilds from eligible outcomes
+and invalidates v1 candidates rather than mixing training policies.

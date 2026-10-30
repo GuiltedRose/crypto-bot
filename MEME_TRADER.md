@@ -197,7 +197,7 @@ not become profit labels before cost/rent reconstruction.
 
 The existing rule strategy continues selecting trades while the network learns.
 Thirty eligible training closes permit freezing a candidate; its weights and
-0.5 score threshold stay fixed throughout prospective validation. Each later
+2/3 score threshold stay fixed throughout prospective validation. Each later
 entry records that candidate's score before submission. Paper and followed-wallet
 outcomes train weights but cannot count as confirmed-live validation.
 
@@ -211,7 +211,7 @@ A failed completed evaluation is consumed; the next candidate needs new
 prospective predictions. Historical replay cannot qualify a model.
 
 Promotion occurs only while flat, reconciled and not halted. The qualified
-network can only veto an otherwise eligible entry below 0.5; existing exits,
+network can only veto an otherwise eligible entry below 2/3; existing exits,
 position sizing, reserves, on-chain checks and execution checks remain mandatory.
 Two consecutive losses or nonpositive P&L across the last five post-activation
 closes rolls the model back to shadow collection. Changed policy, missing
@@ -245,7 +245,7 @@ trained by manual backpropagation and weighted binary cross entropy. Its dense
 math is adapted from the imported AI tool; the hidden gradient uses the old
 output weights, correcting the original update-order bug. Initialization is
 deterministic and imports no EEG data, pretrained weights or logistic weights.
-The model schema is `online-mlp-v1`; existing state rebuilds from eligible bot
+The model schema is `online-mlp-v2`; existing state rebuilds from eligible bot
 labels at startup. Parameters are validated JSON, with no new dependencies. Its score does not
 authorize entries, loosen risk checks, change thresholds, or increase position
 size. The report exposes shared weights and sample counts by source.
@@ -1272,3 +1272,9 @@ Use the normal single-writer procedure; do not launch a second copy while the
 paper process is running. Current run ID/PID are in `state/paper_memes/runner.json`,
 and current outcomes are in `report.json`. Archived reports are under
 `state/paper_memes/archives/` with their original run IDs.
+
+Positive net outcomes receive a 2x multiplier on top of inverse-frequency class
+weights; losses and break-even outcomes retain negative labels. The neural veto
+threshold is 2/3 to compensate for that multiplier, with prospective qualification
+still required. Scores are uncalibrated. Model v2 rebuilds from eligible outcomes
+and invalidates v1 candidates rather than mixing training policies.
