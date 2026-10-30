@@ -272,6 +272,10 @@ def main():
         engine.neural_mode=args.neural_mode
         def publish(result):
             record={'timestamp':time.time(),'mode':'live' if args.execute else 'unsigned_simulation',**result}
+            if result.get('status') in ('started','scan_complete','holding','confirmed_buy','confirmed_sell',
+                    'loss_streak_cooldown','drawdown_halted','cycle_error_no_replacement_orders'):
+                from trade_metrics import rolling_performance
+                record['rolling_performance']=rolling_performance(directory/'meme_live.sqlite','bot_live')
             tmp=directory/'status.tmp';tmp.write_text(json.dumps(record,allow_nan=False));tmp.replace(directory/'status.json')
             from meme_console import format_status
             print(json.dumps(record) if args.json else format_status(record,rules),flush=True)

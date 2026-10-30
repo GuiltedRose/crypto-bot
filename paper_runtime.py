@@ -291,6 +291,8 @@ class PaperSession:
             if isinstance(execution,dict) and execution:
                 assumptions={key:execution.get(key) for key in ('model_only','fee_per_side','network_fee_sol','entry_rent_sol','exit_rent_sol','rent_is_refundable','rent_source')}
                 break
+        from trade_metrics import rolling_performance
+        recent=rolling_performance(self.directory/'paper.sqlite','bot_paper')
         native = (self.trader.native_sol or 0)*(self.trader.sol_price_usd or 0)
         return {'mode': 'paper_only', 'run_id': self.run_id, 'initial_inventory': self.initial,
                 'cash_usdc': self.trader.cash, 'native_sol': self.trader.native_sol,
@@ -298,6 +300,7 @@ class PaperSession:
                 'liquid_cash_equity_usd':self.trader.cash+native,
                 'locked_rent_sol':sum(self.trader.account_rent.values()),
                 'valuation_as_of': self.trader.last_timestamp, 'realized_pnl_usd': realized,
+                'rolling_performance':recent,
                 'position': position,'positions':self.trader.all_positions(),'max_positions':self.trader.max_positions, 'drawdown_halted': self.trader.halted,
                 'consecutive_losses':self.trader.consecutive_losses,
                 'loss_cooldown_until':self.trader.loss_cooldown_until,

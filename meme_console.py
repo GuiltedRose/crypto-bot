@@ -3,7 +3,7 @@ from collections import Counter
 from datetime import datetime
 
 
-def format_status(record,rules=None):
+def _format_status(record,rules=None):
     clock=datetime.fromtimestamp(record['timestamp']).astimezone().strftime('%H:%M:%S %Z')
     prefix=f"[{clock} {record.get('mode','unknown').upper()}]"
     status=record.get('status','unknown')
@@ -119,3 +119,11 @@ def analysis_summary(record):
         coverage=f"{score['coverage_fraction']*100:.0f}% coverage" if score.get('coverage_fraction') is not None else 'coverage unavailable'
         lines.append(line('Shadow signal score',value+f" ({coverage}; diagnostic only)"))
     return '\n'.join(lines)
+
+
+def format_status(record,rules=None):
+    text=_format_status(record,rules)
+    if record.get('rolling_performance'):
+        from trade_metrics import format_rolling
+        return text+'\n'+format_rolling(record['rolling_performance'])
+    return text

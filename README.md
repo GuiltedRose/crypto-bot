@@ -86,6 +86,14 @@ or to rule-based exits. All valid historical samples stay in the ledgers;
 consumed evaluation blocks can train later challengers, which need fresh tests.
 Evaluation state is saved in `exit_evaluation.json`. Unchanged data is cached.
 
+Both paper and live summaries include `LAST 20`: valid completed trades,
+net P&L, win rate, and wins/losses/break-even counts. A partial window shows its
+actual count. Paper spans archived runs without counting virtual refills;
+invalid/synthetic outcomes and open positions are excluded. Live also subtracts
+recorded failed-order fees since the earliest included entry. This recent window
+can span different models and is separate from lifetime training and exit OOS
+metrics. Learning parameters and risk limits are unchanged.
+
 ## Getting started
 
 Use Python 3.10 or later. From the repository directory:

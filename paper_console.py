@@ -33,6 +33,9 @@ def format_report(report,events=()):
     elif status.get('status') not in (None,'ok','idle'):
         summary+=' | data: '+str(status['status'])
     lines.append(summary)
+    if report.get('rolling_performance'):
+        from trade_metrics import format_rolling
+        lines.append(format_rolling(report['rolling_performance']))
     if training:
         sources=training.get('source_samples',{})
         label='NN cached' if status.get('learning_error') else 'NN'
