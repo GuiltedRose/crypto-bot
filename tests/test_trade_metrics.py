@@ -56,3 +56,17 @@ class RollingPerformanceTests(unittest.TestCase):
             metrics=rolling_performance(path,'bot_paper')
         self.assertEqual(metrics['trades'],2)
         self.assertAlmostEqual(metrics['net_pnl_usd'],.3)
+
+
+    def test_lifetime_and_recent_windows_have_distinct_totals_in_both_consoles(self):
+        trades=[{'entry_at':i,'exit_at':i+1,'exit_signature':str(i),
+                 'net_pnl_usd':10 if i<5 else -1} for i in range(25)]
+        with tempfile.NamedTemporaryFile() as path,patch('trade_metrics.paper_outcomes',return_value=(trades,[],[],0)):
+            metrics=rolling_performance(path.name,'bot_paper')
+        self.assertEqual(metrics['net_pnl_usd'],-20)
+        self.assertEqual(metrics['lifetime']['net_pnl_usd'],30)
+        self.assertEqual(metrics['lifetime']['win_rate'],.2)
+        for text in (format_report({'marked_equity_usd':6,'rolling_performance':metrics}),
+                     format_status({'timestamp':0,'mode':'live','status':'holding','rolling_performance':metrics})):
+            self.assertIn('LIFETIME | 25 closed | net $+30.00 | win 20.0%',text)
+            self.assertIn('LAST 20 | 20/20 closed | net $-20.00 | win 0.0%',text)

@@ -86,7 +86,7 @@ or to rule-based exits. All valid historical samples stay in the ledgers;
 consumed evaluation blocks can train later challengers, which need fresh tests.
 Evaluation state is saved in `exit_evaluation.json`. Unchanged data is cached.
 
-Both paper and live summaries include `LAST 20`: valid completed trades,
+Both paper and live summaries show `LIFETIME` totals alongside `LAST 20`: valid completed trades,
 net P&L, win rate, and wins/losses/break-even counts. A partial window shows its
 actual count. Paper spans archived runs without counting virtual refills;
 invalid/synthetic outcomes and open positions are excluded. Live also subtracts
