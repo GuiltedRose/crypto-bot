@@ -320,11 +320,14 @@ class PaperDipTrader:
             if self.native_sol is not None:
                 projected_pnl-=position['entry_native_cost_usd']+(network+(0 if position.get('rent_is_refundable') else exit_rent))*self.sol_price_usd
             if r.entry_style=='volume_candles': self.mark_risk(equity,projected_pnl)
+            position['last_net_pnl_usd']=projected_pnl
+            from neural_exits import decision
+            early=decision(getattr(self,'neural_exit_model',None),snapshot,r,projected_pnl,position['cash_spent'])
             loss_limit=position.get('max_loss_usd',0)
             profit_target=position.get('take_profit_usd',0)
             stop_hit=projected_pnl<=-loss_limit if loss_limit>0 else price<=position['stop']
             target_hit=projected_pnl>=profit_target if profit_target>0 else price>=position['target']
-            if stop_hit or target_hit or self.halted or time_exit:
+            if stop_hit or target_hit or self.halted or time_exit or early:
                 # Use current quote for gaps, never fill at an unavailable stop.
                 if self.native_sol is not None:
                     if self.native_sol < network+exit_rent:
@@ -347,7 +350,7 @@ class PaperDipTrader:
                     self.loss_cooldown_until=now+getattr(self,'paper_loss_cooldown_seconds',r.loss_streak_cooldown_seconds)
                 self.mark_risk(self.equity())
                 return {'action': 'paper_sell', 'mint': mint, 'pnl_usd': pnl, 'cash_usd': self.cash,'native_sol':self.native_sol,
-                        'reason': 'drawdown halt' if self.halted else 'stop' if stop_hit else 'time limit' if time_exit and not target_hit else 'target'}
+                        'reason': 'drawdown halt' if self.halted else 'stop' if stop_hit else 'target' if target_hit else 'time limit' if time_exit else early['reason']}
             return {'action': 'hold', 'reason': 'manage paper position'}
         if self.halted:
             return {'action': 'reject', 'reason': 'paper drawdown halt'}

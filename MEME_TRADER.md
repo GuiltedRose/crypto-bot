@@ -267,7 +267,7 @@ that fee to USDC.
 The learner uses bounded feature weights and inverse-frequency class weights.
 Its features use followed-wallet buy size, the count of current followed-wallet
 buyers, and each wallet's prior closed-cycle win rate. It does not claim to
-learn candle/market effects from those wallet-only labels. It is a 9-input, 8-hidden-unit tanh network with a sigmoid binary output,
+learn candle/market effects from those wallet-only labels. It is a 14-input, 8-hidden-unit tanh network with a sigmoid binary output,
 trained by manual backpropagation and weighted binary cross entropy. Its dense
 math is adapted from the imported AI tool; the hidden gradient uses the old
 output weights, correcting the original update-order bug. Initialization is
@@ -1324,3 +1324,33 @@ outcomes blocks active-mode entries. Live never trains at startup or on ordinary
 scans; it retrains only while flat during the consecutive-loss cooldown (currently
 one hour). Paper training is independent and continues between its scans.
 Exits, reserves, position limits, signal and execution checks remain mandatory.
+
+### Class balance and recorded chart exits (model v3)
+
+Entry, followed-wallet and exit networks use full-batch class-normalized gradients:
+positive examples collectively carry mass 2 and negative examples mass 1,
+regardless of the negative count. Losses remain training examples and missing
+wins are never invented. Batch averaging avoids oversized rare-win updates and
+chronological runs of losses erasing them. The entry threshold remains 2/3.
+
+The input schema adds completed-chart return, peak drawdown, volume change,
+bearish-bar frequency and current net position return (zero for entry examples).
+Future, partial, stale, malformed and gapped chart windows have neutral features.
+Existing recorded entry charts are used where available.
+
+`neural_position_quotes` records at most one chart/net-liquidation observation
+per position per minute. The separate continuation model labels a quote only
+when the same position has an observed quote 60–180 seconds later. Missing
+future data is not filled; no label crosses positions or run boundaries. No
+counterfactual profit or causal explanation is claimed.
+
+Early exits require 30 labeled pairs, five positions, and at least five samples
+of each direction. Continuation scores below 1/3 may request an early profit or
+loss exit; original stops, targets, drawdown and time exits take priority. All
+live simulation, slippage and inventory checks remain; early-profit exits must
+have positive minimum net proceeds. Incompatible models or missing chart data
+leave original exits operational. Paper shadow mode does not use neural exits.
+Live retraining remains restricted to its loss cooldown; paper refreshes between
+scans. Model v3 rebuilds weights for the expanded feature schema. Restart paper
+first to produce compatible weights; active live mode blocks entries if none
+are available, while existing position exits remain operational.

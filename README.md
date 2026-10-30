@@ -26,8 +26,8 @@ Available code is not necessarily enabled or qualified for live trading.
 
 The neural network learns from eligible completed paper trades, confirmed bot
 trades, and receipt-backed outcomes from configured saved wallets. Both wins
-and losses contribute. Positive outcomes receive a 2x multiplier on top of
-class-frequency weighting; the selection threshold compensates for this bias.
+and losses contribute. Full-batch training gives the positive class twice the total weight of the
+negative class, regardless of class counts; the selection threshold compensates for this bias.
 Scores remain uncalibrated; online selection is experimental, not validated profitability. Completed paper outcomes remain available across balance
 resets; refills, rent returns, voided fills, and synthetic trades are not profit
 labels. Paper results remain modeled data, separate from confirmed live returns.
@@ -56,6 +56,15 @@ must pass prospective confirmed-live evaluation first. Use `--neural-mode off`
 for live rule-only entries or `--neural-mode shadow` for paper rule-only entries.
 See the [qualification policy](MEME_TRADER.md#autonomous-neural-qualification)
 and [network review](research/neural_network_review.md).
+
+Chart inputs now include completed-candle returns, drawdown from the recent
+peak, volume change, and bearish-candle frequency. A separate exit network
+learns one-minute changes in recorded net liquidation quotes while positions
+are held. After 30 labeled pairs across at least five positions, with examples
+of both directions, it may suggest an earlier exit. Existing stops and time
+limits take priority; live early-profit exits require positive minimum net
+proceeds. Missing or stale chart data disables this optional signal.
+These quote-based labels show associations, not causes or guaranteed fills.
 
 ## Getting started
 

@@ -3,7 +3,7 @@
 Reviewed all source modules and accompanying documentation before removing the imported directory.
 
 - `dense.py`, `layer.py`, `activation.py`: adapted dense forward/backpropagation and nonlinear activation math into `neural_network.py`. Fixed input-gradient computation using updated rather than original weights. Replaced global random initialization with a local deterministic generator.
-- `losses.py`, `main.py`: adapted weighted cross-entropy training to a binary sigmoid target. Source used multiclass softmax, dense 128/64 hidden layers, EEG labels and saved NPZ weights. Trading uses nine bounded existing features and eight tanh hidden units; no source weights are loaded.
+- `losses.py`, `main.py`: adapted weighted cross-entropy training to a binary sigmoid target. Source used multiclass softmax, dense 128/64 hidden layers, EEG labels and saved NPZ weights. Trading uses fourteen bounded features and eight tanh hidden units; no source weights are loaded.
 - `convolution.py`, `reshape.py`: reviewed; unnecessary for the existing tabular trading features.
 - `main.py`, `data_explorer.py`, `config.py`: reviewed EEG downloads, synthetic fallback, filtering, normalization, splitting, evaluation, weight loading/saving and cleanup. These paths are excluded. In particular, source normalization preceded splitting and random splits do not provide chronological trading validation. Existing trading feature transforms use no fitted future statistics.
 - `test.py`, `weight-checker.py`: source dependency/NPZ inspection utilities, not model correctness tests. Replaced with numerical gradient, nonlinear XOR, JSON persistence and invalid-schema checks.
@@ -14,5 +14,9 @@ The shared model rebuilds from eligible paper closes across all runs, confirmed 
 Positive net outcomes receive a 2x multiplier on top of inverse-frequency class
 weights; losses and break-even outcomes retain negative labels. The neural veto
 threshold is 2/3 to compensate for that multiplier, with prospective qualification
-required in the optional qualified mode. Scores are uncalibrated. Model v2 rebuilds from eligible outcomes
+required in the optional qualified mode. Scores are uncalibrated. Model v3 rebuilds from eligible outcomes
 and invalidates v1 candidates rather than mixing training policies.
+
+Model v3 uses class-normalized full-batch training and completed-chart features.
+An independent continuation network learns from recorded one-minute changes in
+net position quotes; it is a predictive association, not causal loss analysis.

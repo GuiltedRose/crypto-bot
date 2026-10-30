@@ -92,12 +92,20 @@ class MemeLiveStore:
         if self.cooldown_training_only:
             from meme_learning import new_weighted_model,weighted_prediction
             model=self.state.get('learning_model_live')
+            if model is not None:
+                try:weighted_prediction(model,{})
+                except (ValueError,KeyError,TypeError):model=None
             if model is None and self.learning_paper_db:
                 path=self.learning_paper_db.parent/'learning.json'
                 if path.exists():
-                    model=json.loads(path.read_text())['model']
-                    weighted_prediction(model,{})
+                    try:
+                        model=json.loads(path.read_text())['model']
+                        weighted_prediction(model,{})
+                    except (ValueError,KeyError,TypeError):model=None
             if model is None: model=new_weighted_model()
+            candidate=self.state.get('neural_autonomy',{}).get('candidate',{})
+            if candidate and candidate['model'].get('version')!=model['version']:
+                self.state.pop('neural_autonomy',None)
             self.state['learning_model_live']=model
             self.save('inference_weights_loaded',{'training_samples':model['samples']})
         else:
@@ -114,6 +122,8 @@ class MemeLiveStore:
         live,_,failures,_=live_outcomes(self.directory/'meme_live.sqlite')
         paper=paper_outcomes(self.learning_paper_db)[0] if self.learning_paper_db and self.learning_paper_db.exists() else []
         model=train_shared_model(outcomes,live,paper)
+        from neural_exits import train
+        model['exit_model']=train([self.directory/'meme_live.sqlite',self.learning_paper_db])
         if self.state.get('learning_model_live')!=model:
             self.state['learning_model_live']=model
             self.save(record_event,{'version':model['version'],
@@ -387,10 +397,14 @@ class MemeLiveEngine:
             units=position['units'];out=adapter.output('sell',units,market)
             net=(out*(1-self.rules.slippage_per_side))/1e9*sol_price-.00002*sol_price-position['cost_usd']
             self.mark(equity,net)
+            from neural_exits import record,decision
+            if position.get('entry_signature'):
+                record(self.store.db,position['entry_signature'],snapshot,self.rules,net,position['cost_usd'])
+            early=decision(self.store.state.get('learning_model_live',{}).get('exit_model'),snapshot,self.rules,net,position['cost_usd']) if getattr(self,'neural_mode','qualified') in ('active','learning') else None
             profit_target=position.get('take_profit_usd',self.rules.take_profit_usd)
             loss_limit=position.get('max_loss_usd',self.rules.max_loss_usd)
             reason=('bot strategy drawdown' if s['halted'] else 'loss trigger' if net<=-loss_limit else
-                    'profit target' if net>=profit_target else 'time limit' if now-position['opened_at']>=self.rules.max_holding_seconds else None)
+                    'profit target' if net>=profit_target else 'time limit' if now-position['opened_at']>=self.rules.max_holding_seconds else early['reason'] if early else None)
             if reason is None: return {'status':'holding','estimated_net_pnl_usd':net}
         else:
             # Preserve the explicit dollar reserve and native exit reserve.
@@ -421,9 +435,10 @@ class MemeLiveEngine:
         if side=='buy': profit_target,loss_limit=self.rules.exit_limits(units/1e9*sol_price)
         unsigned,context=adapter.build(side,units,snapshot=market)
         simulated=adapter.simulate(unsigned,context,reserve=int(self.rules.native_fee_reserve_sol*1e9))
-        if side=='sell' and reason=='profit target':
+        if side=='sell' and reason in ('profit target','neural early profit exit'):
             net_minimum=(context['min_output']-simulated['fee_lamports']-simulated['rent_lamports']+simulated.get('recoverable_rent_lamports',0))/1e9*sol_price-position['cost_usd']
-            if net_minimum<profit_target:
+            required_profit=profit_target if reason=='profit target' else 0.
+            if net_minimum<required_profit or reason=='neural early profit exit' and net_minimum<=0:
                 return {'status':'holding','reason':'net minimum proceeds have not reached profit target','estimated_net_pnl_usd':net_minimum}
         if side=='buy':
             setup=(simulated['rent_lamports']-simulated.get('recoverable_rent_lamports',0))/1e9*sol_price

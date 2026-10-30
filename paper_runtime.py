@@ -138,6 +138,7 @@ class PaperSession:
         # Work on a copy: exceptions and failed commits cannot partially apply a fill.
         candidate = decode_state(json.loads(json.dumps(encode_state(self.trader))))
         try:
+            candidate.neural_exit_model=getattr(self,'learning_model',{}).get('exit_model') if getattr(self,'neural_mode','shadow')=='learning' else None
             event = candidate.on_snapshot(snapshot)
             if event.get('action')=='paper_buy':
                 from meme_learning import decision_context
@@ -176,6 +177,11 @@ class PaperSession:
             self.db.execute('UPDATE paper_runs SET checkpoint=? WHERE id=?',
                             (json.dumps(encode_state(candidate), allow_nan=False), self.run_id))
         self.trader = candidate
+        for position in candidate.all_positions():
+            if position['mint']==snapshot.get('mint') and 'last_net_pnl_usd' in position:
+                from neural_exits import record
+                record(self.db,f"{self.run_id}:{position['mint']}:{position['opened_at']}",snapshot,candidate.rules,
+                    position['last_net_pnl_usd'],position['cash_spent'])
         return event
 
     def reclaim_rent(self):
@@ -229,6 +235,8 @@ class PaperSession:
             from wallet_watch import followed_wallet_outcomes
             external=followed_wallet_outcomes(wallet_db,wallets)
         model=train_shared_model(external,live,paper)
+        from neural_exits import train
+        model['exit_model']=train([self.directory/'paper.sqlite',live_db])
         document={'model':model,'qualification':'paper_training_only_not_live_validation'}
         target=self.directory/'learning.json'
         raw=json.dumps(document,allow_nan=False,sort_keys=True)

@@ -7,7 +7,7 @@ Only JSON parameters cross the persistence boundary; no pretrained artifacts.
 import math
 import random
 
-VERSION='online-mlp-v2'
+VERSION='online-mlp-v3'
 HIDDEN=8
 
 
@@ -55,3 +55,35 @@ def train(parameters,values,target,rate,sample_weight,l2):
         'output_weights':[step(w,error*h+l2*w) for w,h in zip(parameters['output_weights'],hidden)],
         'output_bias':step(parameters['output_bias'],error)}
     return result,probability
+
+
+def fit_balanced(parameters,samples,rate=.15,epochs=8):
+    """Average each class separately: positive class mass 2, negative mass 1.
+
+    Full-batch gradients prevent a long final run of losses erasing rare wins.
+    An absent positive class is never fabricated.
+    """
+    counts={label:sum(target==label for _,target in samples) for label in (0,1)}
+    masses={label:float(2 if label else 1) for label in (0,1) if counts[label]}
+    total=sum(masses.values())
+    if not total:return parameters
+    for _ in range(epochs):
+        gradients={'hidden_weights':[[0.]*len(parameters['hidden_weights'][0]) for _ in range(HIDDEN)],
+                   'hidden_bias':[0.]*HIDDEN,'output_weights':[0.]*HIDDEN,'output_bias':0.}
+        for values,target in samples:
+            probability,hidden=forward(parameters,values)
+            error=(probability-target)*masses[target]/counts[target]/total
+            gradients['output_bias']+=error
+            for h in range(HIDDEN):
+                gradients['output_weights'][h]+=error*hidden[h]
+                gradient=error*parameters['output_weights'][h]*(1-hidden[h]**2)
+                gradients['hidden_bias'][h]+=gradient
+                for i,value in enumerate(values):gradients['hidden_weights'][h][i]+=gradient*value
+        def step(value,gradient,regularize=True):
+            return max(-8.,min(8.,value-rate*(gradient+(.01*value if regularize else 0))))
+        parameters={
+            'hidden_weights':[[step(w,g) for w,g in zip(row,gr)] for row,gr in zip(parameters['hidden_weights'],gradients['hidden_weights'])],
+            'hidden_bias':[step(w,g,False) for w,g in zip(parameters['hidden_bias'],gradients['hidden_bias'])],
+            'output_weights':[step(w,g) for w,g in zip(parameters['output_weights'],gradients['output_weights'])],
+            'output_bias':step(parameters['output_bias'],gradients['output_bias'],False)}
+    return parameters

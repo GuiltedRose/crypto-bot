@@ -13,7 +13,7 @@ import sqlite3
 MODEL_FEATURES=('buy_sell_balance','turnover_vs_liquidity','candle_range',
                 'impulse_strength','pullback_depth','reclaim_volume',
                 'followed_wallet_buy_size','followed_wallet_prior_win_rate',
-                'followed_wallet_activity')
+                'followed_wallet_activity','chart_return','chart_drawdown','chart_volume_change','chart_bearish_fraction','position_net_fraction')
 MODEL_LEARNING_RATE=.15
 MODEL_L2=.01
 POSITIVE_OUTCOME_MULTIPLIER=2.
@@ -52,6 +52,33 @@ def _flow_metrics(snapshot):
     }
 
 
+def chart_features(context):
+    candles=context.get('completed_candles')
+    if candles is None:
+        history=context.get('candle_history',{})
+        if isinstance(history,dict) and any(history.get(k)!=context.get(k) for k in ('mint','pool') if k in history and k in context):return (0.,)*4
+        candles=history.get('candles',[]) if isinstance(history,dict) else []
+    now=context.get('observed_at')
+    if not isinstance(candles,list) or not _finite(now):return (0.,)*4
+    bars=[]
+    for row in candles[-12:]:
+        if not isinstance(row,dict):return (0.,)*4
+        values=[row.get(k) for k in ('timestamp','open','high','low','close','volume_usd')]
+        if not all(_finite(v) for v in values):return (0.,)*4
+        stamp,o,h,l,c,v=values
+        if row.get('final') is False or stamp%60 or stamp+60>now or not 0<l<=min(o,c)<=max(o,c)<=h or v<0:return (0.,)*4
+        bars.append(row)
+    if len(bars)<3 or now-bars[-1]['timestamp']-60>120:return (0.,)*4
+    if any(b['timestamp']-a['timestamp']!=60 for a,b in zip(bars,bars[1:])):return (0.,)*4
+    def clip(v):return max(-1.,min(1.,v))
+    peak=max(row['high'] for row in bars)
+    prior=sum(row['volume_usd'] for row in bars[:-1])/len(bars[:-1])
+    return (clip((bars[-1]['close']/bars[0]['open']-1)/.25),
+            clip((bars[-1]['close']/peak-1)/.25),
+            clip((bars[-1]['volume_usd']/prior-1)/2) if prior>0 else 0.,
+            2*sum(row['close']<row['open'] for row in bars)/len(bars)-1)
+
+
 def model_features(context):
     flow=context.get('flow_metrics')
     if not isinstance(flow,dict): flow=_flow_metrics(context)
@@ -78,7 +105,8 @@ def model_features(context):
     prior_rate=0. if not _finite(win_rate) else max(-1.,min(1.,2*win_rate-1))
     activity=bounded(wallet.get('activity_count'),3.)
     return dict(zip(MODEL_FEATURES,(balance,turnover,candle,impulse,pullback,reclaim,
-                                    buy_size,prior_rate,activity)))
+                                    buy_size,prior_rate,activity,*chart_features(context),
+        max(-1.,min(1.,context.get('position_net_fraction',0.)/.25)))))
 
 
 def _followed_entry_features(snapshot,model):
@@ -268,6 +296,9 @@ def train_followed_wallet_model(outcomes):
         stats['wins']+=int(outcome['net_pnl_quote']>0)
         model['wallet_stats']=dict(model['wallet_stats'],**{
             outcome['wallet']:{**stats,'win_rate':stats['wins']/stats['closed_trades']}})
+    from neural_network import fit_balanced,initialize
+    model['weights']=fit_balanced(initialize(len(MODEL_FEATURES)),
+        [(list(model_features(row['entry_context']).values()),int(row['net_pnl_quote']>0)) for row in ordered])
     count=len(scored)
     return model,{'entry_score_evaluation':{'trades':count,
         'accuracy':sum((score>=.5)==won for score,won in scored)/count if count else None,
@@ -295,12 +326,19 @@ def train_shared_model(external=(),live=(),paper=()):
             rows.append((row['exit_at'],repr(identity),source,row,pnl_key))
     wallet_stats={}
     for _,identity,source,row,pnl_key in sorted(rows):
-        model,_=update_weighted_model(model,row['entry_context'],row[pnl_key],identity)
+        model['samples']+=1
+        model['wins']+=int(row[pnl_key]>0)
+        model['losses']+=int(row[pnl_key]<=0)
+        model['last_trade_signature']=identity
         counts[source]+=1
         if source=='followed_wallet':
             stats=wallet_stats.setdefault(row['wallet'],{'closed_trades':0,'wins':0})
             stats['closed_trades']+=1;stats['wins']+=int(row[pnl_key]>0)
             model['wallet_stats'][row['wallet']]={**stats,'win_rate':stats['wins']/stats['closed_trades']}
+    from neural_network import fit_balanced,initialize
+    samples=[(list(model_features(row['entry_context']).values()),int(row[key]>0)) for _,_,_,row,key in sorted(rows)]
+    model['weights']=fit_balanced(initialize(len(MODEL_FEATURES)),samples)
+    model['class_balance']={'positive_class_mass':2 if model['wins'] else 0,'negative_class_mass':1 if model['losses'] else 0}
     model['source_samples']=dict(counts)
     model['training_ids']=[identity for _,identity,_,_,_ in sorted(rows)]
     return model

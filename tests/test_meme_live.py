@@ -196,6 +196,18 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(self.engine.prepare(self.row,100,6.5,1200)['intent']['reason'],'profit target')
         self.rpc['output']=15000000
         self.assertEqual(self.engine.prepare(self.row,100,6.5,1200)['intent']['reason'],'bot strategy drawdown')
+    def test_neural_early_profit_exit_requires_positive_simulated_minimum(self):
+        self.store.state['position']={'mint':'Mint','pool':'Pool','kind':'bonding_curve',
+            'units':1000,'cost_usd':1.78,'opened_at':1200}
+        self.engine.neural_mode='active';self.rpc['output']=20500000
+        self.assertEqual(self.engine.prepare(self.row,100,6.5,1200)['status'],'holding')
+        with patch('neural_exits.decision',return_value={'reason':'neural early profit exit'}):
+            result=self.engine.prepare(self.row,100,6.5,1200)
+            self.assertEqual(result['intent']['reason'],'neural early profit exit')
+            with patch.object(FakeAdapter,'simulate',return_value={'fee_lamports':10000000,'rent_lamports':0}):
+                self.assertEqual(self.engine.prepare(self.row,100,6.5,1200)['status'],'holding')
+        self.assertIsNotNone(self.store.state['position'])
+
     def test_modeled_paper_execution_flags_cannot_enter_live(self):
         self.row['execution']={'model_only':True}
         with self.assertRaisesRegex(ValueError,'Paper'): self.engine.prepare(self.row,100,6.5,1200)
