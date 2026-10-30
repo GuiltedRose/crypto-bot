@@ -245,7 +245,9 @@ class PaperSession:
             temporary.write_text(raw);temporary.replace(target)
         self.learning_model=model
         self.learning_summary={'version':model['version'],'samples':model['samples'],
-            'wins':model['wins'],'losses':model['losses'],'source_samples':model['source_samples']}
+            'wins':model['wins'],'losses':model['losses'],'source_samples':model['source_samples'],
+            'class_balance':model.get('class_balance',{}),
+            'exit_model':{key:model['exit_model'].get(key,0) for key in ('samples','wins','losses','trades')}}
         return self.learning_summary
 
     def auto_reset_if_exhausted(self):

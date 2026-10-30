@@ -123,7 +123,10 @@ Paper defaults to `--max-positions 4 --loss-cooldown-seconds 0`. Up to eight
 slots are supported, subject to the shared spendable bankroll and costs. Use
 `--max-positions 1 --loss-cooldown-seconds 3600` for a single-position paper trial
 with the live-length cooldown. These options never change live limits.
-Detailed wallet observations stay in the report rather than flooding the console.
+The console shows trades, equity, positions, training counts and current blockers.
+Use `--json` for full console reports. Full recorded observations and network
+inputs remain in the journals and reports; display formatting does not filter
+training data.
 
 Reports and journals stay in the selected state directory. By default, exhausted or drawdown-halted paper runs archive
 and refill their original virtual inventory when flat. `--no-auto-reset` keeps

@@ -10,6 +10,7 @@ from pathlib import Path
 import time
 from meme_dip import DipRules
 from paper_runtime import PaperSession
+from paper_console import format_report
 from paper_sources import source_error, UnsupportedMarket
 from pump_market import PumpMarketSources
 from pump_narratives import NarrativeStore, valid_mint
@@ -148,6 +149,7 @@ def main():
     parser.add_argument('--evidence-dir', type=Path, help='Supplemental identity-bound proof objects named <mint>.json')
     parser.add_argument('--loop', action='store_true')
     parser.add_argument('--interval', type=float, default=60)
+    parser.add_argument('--json',action='store_true',help='Print full JSON reports instead of compact summaries')
     parser.add_argument('--status', action='store_true')
     parser.add_argument('--reclaim-paper-rent',action='store_true',help='Return eligible simulated account rent to virtual SOL; never touches the real wallet')
     parser.add_argument('--loss-cooldown-seconds',type=int,default=0,help='Paper-only pause after consecutive losses (default 0; use 3600 to match live)')
@@ -213,7 +215,7 @@ def main():
             return
         if args.reset or args.status or not (args.feed or args.mint or args.discover or args.watch_wallet):
             report = session.publish({'status': 'idle'})
-            print(json.dumps(report, indent=2))
+            print(json.dumps(report, indent=2) if args.json else format_report(report))
             return
         session.publish({'status':'starting_sources'})
         if session.trader.rules.evidence_mode=='market_only':
@@ -239,6 +241,7 @@ def main():
             session.refresh_learning(args.learning_live_db,args.wallet_source_dir/'wallet_watch.sqlite',args.watch_wallet)
         except (OSError,ValueError,sqlite3.Error):
             pass
+        event_cursor=session.db.execute('SELECT COALESCE(MAX(sequence),0) FROM paper_events').fetchone()[0]
         while True:
             reset_event=session.auto_reset_if_exhausted() if not args.no_auto_reset and not args.feed else None
             session.configure_loss_cooldown(args.loss_cooldown_seconds)
@@ -254,12 +257,10 @@ def main():
                 status=dict(status,learning_error=type(error).__name__)
             if reset_event: status=dict(status,balance_reset=reset_event)
             report = session.publish(status)
-            print(json.dumps({'mode': 'paper_only', 'run_id': session.run_id, 'source_status':{k:v for k,v in status.items() if k!='wallet_watch'},
-                              'entry_blockers':sorted({e.get('reason','') for e in report['recent_events'] if e.get('action') in ('reject','watch')}),
-                              'cooldown_until':report['loss_cooldown_until'],
-                              'equity_usd': report['marked_equity_usd'], 'events': report['event_counts'],
-                              'neural_training':report['neural_training'],'neural_mode':report['neural_mode'],
-                              'open_positions':len(report['positions']),'max_positions':report['max_positions']}), flush=True)
+            rows=session.db.execute('SELECT sequence,event FROM paper_events WHERE sequence>? ORDER BY sequence',(event_cursor,)).fetchall()
+            events=[json.loads(raw) for _,raw in rows]
+            if rows:event_cursor=rows[-1][0]
+            print(json.dumps(report) if args.json else format_report(report,events),flush=True)
             if not args.loop:
                 break
             # Short sleeps permit prompt interruption even with a long polling interval.
@@ -272,6 +273,7 @@ def main():
                 time.sleep(max(0, min(1, deadline-time.monotonic())))
     except KeyboardInterrupt:
         session.publish({'status': 'stopped; paper position preserved'})
+        if not args.json:print('Stopped. Paper positions and training data saved.',flush=True)
     finally:
         if narratives:
             narratives.db.close()
