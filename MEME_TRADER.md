@@ -215,7 +215,7 @@ network can only veto an otherwise eligible entry below 0.5; existing exits,
 position sizing, reserves, on-chain checks and execution checks remain mandatory.
 Two consecutive losses or nonpositive P&L across the last five post-activation
 closes rolls the model back to shadow collection. Changed policy, missing
-training provenance (including a paper balance reset), or a candidate older
+training provenance (such as removed or voided outcomes), or a candidate older
 than 60 days invalidates it. Existing risk halts are never cleared.
 
 Learning/qualification work is skipped while a position or order is open so
@@ -224,7 +224,7 @@ refreshes training and qualification while flat; status and transitions are
 journaled under `neural_autonomy`. Enabling `--execute` remains user controlled.
 
 The live runner maintains an experimental, CPU-only from-scratch neural network
-trained on confirmed bot closes, eligible active-run paper closes, and followed-wallet
+trained on confirmed bot closes, eligible completed paper closes across all runs, and followed-wallet
 outcomes. Wallet receipt labels use the configured saved-wallet list, excluding
 leaderboard-discovered wallets. It begins observing each followed wallet at first collection, and only
 uses complete, receipt-backed buy-to-zero-balance cycles with contiguous
@@ -250,10 +250,17 @@ labels at startup. Parameters are validated JSON, with no new dependencies. Its 
 authorize entries, loosen risk checks, change thresholds, or increase position
 size. The report exposes shared weights and sample counts by source.
 The default paper source is `state/paper_volume/paper.sqlite`, configurable with
-`run_meme_live.py --learning-paper-db`. A balance reset archives its run; all
-archived-run outcomes, explicit refunds/voids and synthetic fills are excluded
-from training and outcome cohorts. Weights rebuild each scan so a reset removes
-previously learned paper labels. Rent/principal returns never become wins.
+`run_meme_live.py --learning-paper-db`. A balance reset archives its run. Completed wins and losses from archived
+runs remain in training and outcome cohorts. Explicit refunds/voids and synthetic
+fills are excluded; balance refills and rent/principal returns never become wins.
+Both paper and live rebuild shared neural weights independently from eligible
+outcomes. Paper writes its model to `<state-dir>/learning.json` while flat,
+including cooldowns and halted periods. Paper defaults to archiving and restoring
+its original virtual inventory after exhaustion or a flat drawdown halt;
+`--no-auto-reset` disables this. Offline `--feed` replay never auto-resets,
+preventing repeated training on the same replay after refilling. Open paper
+positions are never discarded.
+These paper resets do not modify live state, balances or halts.
 Paper remains modeled data and never counts as confirmed live performance.
 Fewer than ten closed outcomes are insufficient for interpretation; the score
 is not calibrated or evidence of profitability. The separate negative-cohort

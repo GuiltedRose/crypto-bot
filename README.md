@@ -56,9 +56,9 @@ The outcome report records entry flow, candle-range, turnover/liquidity and
 sampled on-chain context; after ten confirmed live outcomes, a negative cohort
 blocks new entries in matching contexts. Paper outcomes help train candidates but cannot qualify them for live influence;
 thresholds and stakes are not auto-optimized. A CPU-only from-scratch
-neural network combines confirmed bot closes, eligible active-run paper closes,
+neural network combines confirmed bot closes, eligible completed paper closes across all runs,
 and contiguous receipt-reconstructed outcomes from the configured saved-wallet list.
-Reset/archived, refunded and synthetic paper outcomes are excluded; its score remains shadow-only until a frozen candidate passes prospective
+Balance refills, voided/refunded fills and synthetic paper outcomes are excluded; its score remains shadow-only until a frozen candidate passes prospective
 confirmed-live qualification. A qualified model may veto entries; it cannot
 authorize an otherwise blocked trade or increase its size. Small samples are not validated evidence of profitability; see
 [learning and outcome limits](MEME_TRADER.md#the-bot-also-researches-its-own-orders).

@@ -5,6 +5,7 @@ This entry point has no wallet/key/transaction imports and never reads .env.
 import argparse
 from dataclasses import replace
 import json
+import sqlite3
 from pathlib import Path
 import time
 from meme_dip import DipRules
@@ -145,6 +146,8 @@ def main():
     parser.add_argument('--interval', type=float, default=60)
     parser.add_argument('--status', action='store_true')
     parser.add_argument('--reclaim-paper-rent',action='store_true',help='Return eligible simulated account rent to virtual SOL; never touches the real wallet')
+    parser.add_argument('--no-auto-reset',action='store_true',help='Keep exhausted/drawdown-halted virtual runs stopped instead of archiving and refilling')
+    parser.add_argument('--learning-live-db',type=Path,default=Path('state/meme_live/meme_live.sqlite'),help='Read-only confirmed bot outcomes for shared neural training')
     parser.add_argument('--reset', action='store_true', help='Archive current paper run and start fresh; never touches live state')
     args = parser.parse_args()
     if args.reset and args.reclaim_paper_rent:
@@ -226,13 +229,21 @@ def main():
         if args.discover:
             narratives = NarrativeStore(args.state_dir/'narratives.sqlite')
         while True:
+            reset_event=session.auto_reset_if_exhausted() if not args.no_auto_reset and not args.feed else None
             try:
                 status = feed_once(session, args.feed) if args.feed else markets_once(session, sources, args.mint, args.discover, narratives, watcher, args.watch_wallet)
             except (OSError, ValueError) as error:
                 status = source_error(error)
+            if not session.trader.position:
+                try:
+                    session.refresh_learning(args.learning_live_db,args.wallet_source_dir/'wallet_watch.sqlite',args.watch_wallet)
+                except (OSError,ValueError,sqlite3.Error) as error:
+                    status=dict(status,learning_error=type(error).__name__)
+            if reset_event: status=dict(status,balance_reset=reset_event)
             report = session.publish(status)
             print(json.dumps({'mode': 'paper_only', 'run_id': session.run_id, 'source_status': status,
-                              'equity_usd': report['marked_equity_usd'], 'events': report['event_counts']}), flush=True)
+                              'equity_usd': report['marked_equity_usd'], 'events': report['event_counts'],
+                              'neural_training':report['neural_training']}), flush=True)
             if not args.loop:
                 break
             # Short sleeps permit prompt interruption even with a long polling interval.

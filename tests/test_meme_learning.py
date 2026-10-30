@@ -131,7 +131,7 @@ class BotLearningTests(unittest.TestCase):
 
 
 class SharedLearningTests(unittest.TestCase):
-    def test_paper_reset_removes_archived_labels_from_live_weights(self):
+    def test_paper_reset_preserves_archived_losses_without_learning_refills(self):
         import sqlite3,json
         with tempfile.TemporaryDirectory() as root:
             paper=Path(root)/'paper.sqlite'
@@ -152,9 +152,13 @@ class SharedLearningTests(unittest.TestCase):
             db.execute("UPDATE paper_runs SET archived=4 WHERE id='run'")
             db.execute("INSERT INTO paper_runs VALUES('fresh',4,NULL)")
             db.commit();store.refresh_learning_model()
+            self.assertEqual(store.state['learning_model_live']['samples'],1)
+            self.assertEqual(store.state['learning_model_live']['losses'],1)
+            self.assertTrue(paper_outcomes(paper)[0][0]['training_eligible'])
+            self.assertTrue(report(paper=paper)['outcome_feedback'])
+            db.execute('INSERT INTO paper_events VALUES(4,?,?,?,?)',('run',5,json.dumps({'action':'paper_trade_voided'}),'{}'))
+            db.commit();store.refresh_learning_model()
             self.assertEqual(store.state['learning_model_live']['samples'],0)
-            self.assertFalse(paper_outcomes(paper)[0][0]['training_eligible'])
-            self.assertEqual(report(paper=paper)['outcome_feedback'],[])
             store.close();db.close()
 
     def test_shared_sources_deduplicate_and_exclude_ineligible_paper(self):

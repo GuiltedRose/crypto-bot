@@ -166,6 +166,8 @@ def followed_wallet_outcomes(database,followed_wallets):
     if not followed or not Path(database).exists(): return []
     db=sqlite3.connect('file:'+str(Path(database).resolve())+'?mode=ro',uri=True)
     try:
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='followed_wallet_events'").fetchone():
+            return []  # Older collector DB: no verified cycle labels yet.
         rows=db.execute('SELECT id,wallet,signature,observed,kind,event,raw FROM followed_wallet_events ORDER BY observed,id').fetchall()
     finally:
         db.close()

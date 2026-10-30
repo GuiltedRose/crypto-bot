@@ -221,7 +221,7 @@ def paper_outcomes(path):
             # Corrections may arrive after a close. Never learn an earlier label
             # from a run whose paper fills were reimbursed/voided. Rent reclaim
             # is principal accounting, not a trade refund or a profit label.
-            corrected=archived is not None or any(_paper_correction(json.loads(row[2])) for row in rows)
+            corrected=any(_paper_correction(json.loads(row[2])) for row in rows)
             for sequence,at,event_raw,snapshot_raw in rows:
                 event=json.loads(event_raw);snapshot=json.loads(snapshot_raw)
                 if event['action']=='paper_buy':

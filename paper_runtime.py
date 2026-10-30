@@ -167,6 +167,48 @@ class PaperSession:
         self.trader=candidate
         return event
 
+    def refresh_learning(self,live_db=None,wallet_db=None,wallets=()):
+        """Paper owns this artifact; live separately rebuilds the same shared model."""
+        from meme_learning import paper_outcomes,live_outcomes,train_shared_model
+        paper=paper_outcomes(self.directory/'paper.sqlite')[0]
+        live=live_outcomes(live_db)[0] if live_db and Path(live_db).exists() else []
+        external=[]
+        if wallet_db and Path(wallet_db).exists() and wallets:
+            from wallet_watch import followed_wallet_outcomes
+            external=followed_wallet_outcomes(wallet_db,wallets)
+        model=train_shared_model(external,live,paper)
+        document={'model':model,'qualification':'paper_training_only_not_live_validation'}
+        target=self.directory/'learning.json'
+        raw=json.dumps(document,allow_nan=False,sort_keys=True)
+        if not target.exists() or target.read_text()!=raw:
+            temporary=self.directory/'learning.tmp'
+            temporary.write_text(raw);temporary.replace(target)
+        self.learning_summary={'version':model['version'],'samples':model['samples'],
+            'wins':model['wins'],'losses':model['losses'],'source_samples':model['source_samples']}
+        return self.learning_summary
+
+    def auto_reset_if_exhausted(self):
+        """Refill only virtual inventory, while flat, after actual paper activity."""
+        trader=self.trader
+        if trader.position is not None: return None
+        closed=self.db.execute("SELECT 1 FROM paper_events WHERE run_id=? AND json_extract(event,'$.action')='paper_sell' LIMIT 1",(self.run_id,)).fetchone()
+        if not closed and not trader.halted: return None
+        liquid=trader.cash
+        if trader.native_sol is not None:
+            liquid+=max(0,trader.native_sol-trader.rules.native_fee_reserve_sol)*(trader.sol_price_usd or 0)
+        exhausted=(liquid<=trader.rules.reserve_usd+1e-9 or
+            trader.native_sol is not None and trader.native_sol<=trader.rules.native_fee_reserve_sol)
+        if not exhausted and not trader.halted: return None
+        reason='drawdown halt' if trader.halted else 'spendable paper balance exhausted'
+        initial=dict(self.initial)
+        previous=self.reset(initial['balance'],trader.rules,initial['native_sol'],initial['sol_price_usd'])
+        event={'action':'paper_balance_reset','reason':reason,'archived_run':previous,
+            'new_run':self.run_id,'initial_inventory':initial,'pnl_usd':0,'data_kind':'paper_accounting'}
+        with self.db:
+            self.db.execute('INSERT INTO paper_events(run_id,fingerprint,observed,event,snapshot) VALUES(?,?,?,?,?)',
+                (self.run_id,str(uuid.uuid4()),time.time(),json.dumps(event),'{}'))
+        return event
+
     def report(self):
         counts = {}
         realized = 0
@@ -199,7 +241,7 @@ class PaperSession:
                 'data_kinds': sorted(data_kinds),
                 'safety_evidence_mode':self.trader.rules.evidence_mode,'drawdown_scope':'bot_positions' if self.trader.rules.entry_style=='volume_candles' else 'virtual_wallet',
                 'strategy_realized_pnl_usd':self.trader.strategy_realized_pnl_usd,'strategy_risk':self.trader.strategy_risk,
-                'live_qualified':False,
+                'live_qualified':False,'neural_training':getattr(self,'learning_summary',None),
                 'latest_execution_assumptions':assumptions,
                 'execution_model': 'native_fee_ledger' if self.trader.native_sol is not None else 'assumed_USD_costs',
                 'recent_events': [json.loads(row[0]) for row in self.db.execute(

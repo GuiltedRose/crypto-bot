@@ -42,6 +42,42 @@ class PaperRuntimeTests(unittest.TestCase):
         self.assertEqual(session.report()['event_counts']['paper_buy'], 1)
         session.close()
 
+    def test_paper_training_and_auto_refill_preserve_outcomes(self):
+        session=PaperSession(self.directory,10)
+        try:
+            session.process(self.snapshot_at(1010,.6))
+            session.process(self.snapshot_at(1020,.63))
+            self.assertIsNotNone(session.trader.position)
+            session.trader.halted=True
+            self.assertIsNone(session.auto_reset_if_exhausted())
+            session.process(self.snapshot_at(1030,.9))
+            before=session.refresh_learning()
+            self.assertEqual(before['samples'],1)
+            previous=session.run_id
+            event=session.auto_reset_if_exhausted()
+            self.assertEqual(event['archived_run'],previous)
+            self.assertEqual(event['pnl_usd'],0)
+            self.assertEqual(session.trader.cash,10)
+            self.assertFalse(session.trader.halted)
+            after=session.refresh_learning()
+            self.assertEqual(before,after)
+            self.assertTrue((self.directory/'learning.json').exists())
+            self.assertIsNone(session.auto_reset_if_exhausted())
+        finally:session.close()
+
+    def test_auto_refill_only_when_unspendable_or_halted(self):
+        session=PaperSession(self.directory,10)
+        try:
+            session.process(self.snapshot_at(1010,.6))
+            session.process(self.snapshot_at(1020,.63))
+            session.process(self.snapshot_at(1030,.9))
+            self.assertIsNone(session.auto_reset_if_exhausted())
+            session.trader.cash=.5
+            event=session.auto_reset_if_exhausted()
+            self.assertEqual(event['reason'],'spendable paper balance exhausted')
+            self.assertEqual(session.trader.cash,10)
+        finally:session.close()
+
     def test_reset_archives_positions_and_all_events(self):
         session = PaperSession(self.directory, 10, DipRules(rebound_fraction=0))
         session.process(self.snapshot_at(1010, .6))
