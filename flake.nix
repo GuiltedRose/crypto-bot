@@ -11,6 +11,16 @@
           wheels = builtins.fromJSON (builtins.readFile ./nix/solders-wheels.json);
           python = pkgs.python313.override {
             packageOverrides = final: prev: {
+              jsonalias = final.buildPythonPackage {
+                pname = "jsonalias";
+                version = "0.1.1";
+                format = "wheel";
+                src = pkgs.fetchurl {
+                  url = "https://files.pythonhosted.org/packages/41/ed/05aebce69f78c104feff2ffcdd5a6f9d668a208aba3a8bf56e3750809fd8/jsonalias-0.1.1-py3-none-any.whl";
+                  hash = "sha256-pW0oiOY5eBLGBhVlBOhh6OwA4YgAWvFJ8APHh9s9Pxg=";
+                };
+                pythonImportsCheck = [ "jsonalias" ];
+              };
               solders = final.buildPythonPackage {
                 pname = "solders";
                 version = "0.29.0";
@@ -51,6 +61,7 @@
       packages = eachSystem (system:
         let inherit (environments.${system}) pkgs python;
         in {
+          tmux = pkgs.tmux;
           default = pkgs.stdenvNoCC.mkDerivation {
             pname = "crypto-bot-paper";
             version = "0.1.0";
@@ -71,11 +82,12 @@
       apps = eachSystem (system: {
         default = self.apps.${system}.indexer;
         indexer = { type = "app"; program = "${self.packages.${system}.default}/bin/crypto-bot-indexer"; };
+        tmux = { type = "app"; program = "${environments.${system}.pkgs.tmux}/bin/tmux"; };
         paper = { type = "app"; program = "${self.packages.${system}.default}/bin/crypto-bot-paper"; };
       });
       devShells = eachSystem (system:
         let inherit (environments.${system}) pkgs python;
-        in { default = pkgs.mkShell { packages = [ python pkgs.sqlite ]; }; });
+        in { default = pkgs.mkShell { packages = [ python pkgs.sqlite pkgs.tmux ]; }; });
       checks = eachSystem (system:
         let inherit (environments.${system}) pkgs python;
         in { indexer = pkgs.runCommand "crypto-bot-indexer-tests" { nativeBuildInputs = [ python ]; } ''
