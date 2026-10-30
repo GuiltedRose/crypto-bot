@@ -19,6 +19,11 @@ class OnchainMarket:
         return quote / base * conversion, quote * conversion, source, stamp
 
     def candles(self, mint, pool, start, end):
+        from onchain_candles import CandleEngine
+        cache=CandleEngine(EventStore(self.store.path,readonly=True))
+        if cache.available():
+            rows=[cache.read(mint,pool,60,t) for t in range(start,end,60)]
+            return [row['bar'] for row in rows if row['status']=='complete' and row.get('bar')]
         bars = {}
         for event in self.store.events(mint, pool, start, end, verified_only=True):
             if event['kind'] != 'swap':
@@ -58,18 +63,24 @@ class OnchainMarket:
         buy, sell = Decimal(0), Decimal(0)
         sources = set(hourly.get('sources', [])) | {conversion_source}
         errors = []
-        for e in self.store.events(mint, pool, window_end - 3600, window_end, verified_only=True):
-            if e['kind'] != 'swap':
-                continue
-            try:
-                _, volume, source, _ = self.valued(e)
-                sources.add(source)
-                if e['direction'] == 'buy':
-                    buy += volume
-                else:
-                    sell += volume
-            except ValueError as error:
-                errors.append(str(error))
+        from onchain_candles import CandleEngine
+        cache=CandleEngine(EventStore(self.store.path,readonly=True))
+        if cache.available():
+            buy,sell,cached_sources,errors=cache.rolling(mint,pool,window_end-3600,window_end)
+            sources.update(cached_sources)
+        else:
+            for e in self.store.events(mint, pool, window_end - 3600, window_end, verified_only=True):
+                if e['kind'] != 'swap':
+                    continue
+                try:
+                    _, volume, source, _ = self.valued(e)
+                    sources.add(source)
+                    if e['direction'] == 'buy':
+                        buy += volume
+                    else:
+                        sell += volume
+                except ValueError as error:
+                    errors.append(str(error))
         try:
             bars = self.candles(mint, pool, now // 60 * 60 - 12 * 60, now // 60 * 60)
         except ValueError as error:

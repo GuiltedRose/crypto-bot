@@ -43,11 +43,13 @@ class IndexRpc:
         self.interval = max(.5, float(endpoint.get('interval_seconds', 2)))
         self.budget = budget or BUDGET
         self.validated = False
+        self.requests = self.wire_bytes = self.decoded_bytes = 0
 
     def call(self, method, params):
         if method not in READ_METHODS:
             raise ValueError('Indexer RPC is strictly read-only')
         self.budget.reserve(self.url, self.interval)
+        self.requests += 1
         request = Request(self.url, data=json.dumps({'jsonrpc': '2.0', 'id': 1,
                           'method': method, 'params': params}).encode(),
                           headers={'Content-Type': 'application/json', 'Accept-Encoding': 'gzip', 'User-Agent': 'SolanaOnchainIndex/1'})
@@ -64,7 +66,10 @@ class IndexRpc:
         except (URLError, TimeoutError, OSError):
             self.budget.failure(self.url, 503)
             raise ConnectionError('RPC transport unavailable') from None
-        payload = json.loads(decode_rpc_body(raw, encoding))
+        self.wire_bytes += len(raw)
+        decoded = decode_rpc_body(raw, encoding)
+        self.decoded_bytes += len(decoded)
+        payload = json.loads(decoded)
         if 'error' in payload:
             code = payload['error'].get('code')
             if code in (401, 403):
@@ -207,6 +212,10 @@ class Ingester:
                     'keeping_up': rate >= production if production and processed else None,
                     'warning': 'Indexing lag exceeds available throughput; coverage gates remain enforced'
                                if growing or production and processed and rate < production else None}
+        progress.update(rpc_requests=sum(getattr(r,'requests',0) for r in self.endpoints),
+                        rpc_wire_bytes=sum(getattr(r,'wire_bytes',0) for r in self.endpoints),
+                        rpc_decoded_bytes=sum(getattr(r,'decoded_bytes',0) for r in self.endpoints),
+                        rpc_counter_scope='current process')
         self.store.save_progress(progress)
         return {'status': status, 'progress': progress, **self.store.metrics()}
 

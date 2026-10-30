@@ -14,6 +14,7 @@ def main():
     parser.add_argument('--start-slot', type=int)
     parser.add_argument('--batch-slots', type=int, default=8)
     parser.add_argument('--max-catchup-slots', type=int, default=64)
+    parser.add_argument('--stream', action='store_true', help='Authorized WSS hints plus existing finalized recovery and local candles')
     parser.add_argument('--loop', action='store_true')
     parser.add_argument('--interval', type=float, default=5)
     parser.add_argument('--capture-sol-usd', action='store_true', help='Explicit reviewed Pyth account capture into the selected isolated index; no historical backfill')
@@ -51,11 +52,30 @@ def main():
         return
     ingester = Ingester(store, endpoints, config.get('reviewed_program_versions'))
     start = args.start_slot if store.next_slot() is None else None
+    candles=None
+    markets=config.get('markets',[])
+    if len(markets)>32:parser.error('At most 32 explicitly configured candle markets')
+    if markets:
+        from onchain_candles import CandleEngine
+        candles=CandleEngine(store)
+        for market in markets:candles.watch(market['mint'],market['pool'])
+    if args.stream:
+        if not args.loop or not candles:parser.error('--stream requires --loop and configured markets')
+        import asyncio
+        from onchain_stream import run_stream
+        endpoint=next(e for e in config['endpoints'] if e.get('enabled') is True)
+        if store.policy(endpoint['source_id']).get('stream_verified') is not True:
+            parser.error('Explicit reviewed stream policy required; no stream started')
+        asyncio.run(run_stream(ingester,endpoint,start,candles,args.batch_slots,args.interval))
+        return
     if args.loop:
         for result in follow(ingester, start, args.batch_slots, args.interval, max_catchup_slots=args.max_catchup_slots):
+            if candles:result['candles']=candles.sync()
             print(json.dumps(result), flush=True)
     else:
-        print(json.dumps(ingester.step(start, args.batch_slots)))
+        result=ingester.step(start,args.batch_slots)
+        if candles:result['candles']=candles.sync()
+        print(json.dumps(result))
 
 
 if __name__ == '__main__':

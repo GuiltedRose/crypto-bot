@@ -1,0 +1,46 @@
+{
+  "real_ws_probe": {
+    "transport": "public Solana WSS logsSubscribe",
+    "rights": "UNKNOWN; no operational persistence or model ingestion",
+    "complete_coverage": false,
+    "messages": 1000,
+    "unique_signatures": 982,
+    "seconds": 2.144461907999357,
+    "body_bytes": 3904430,
+    "subscription_acks": 2,
+    "slot_min": 463470970,
+    "slot_max": 463470984,
+    "event_to_delivery_latency": "UNKNOWN: logs notifications have no blockTime"
+  },
+  "synthetic_cache": {
+    "initial": {
+      "processed_minutes": 61,
+      "pending_minutes": 0,
+      "watermark": 3600
+    },
+    "seconds": 0.24381994601571932,
+    "cpu_seconds": 0.24068720600000001,
+    "idle": {
+      "processed_minutes": 0,
+      "pending_minutes": 0,
+      "watermark": 3600
+    },
+    "idle_seconds": 0.0009318660013377666,
+    "database_growth_bytes": 28672,
+    "peak_process_rss_kib_linux": 45332
+  },
+  "real_complete_hour_demonstrated": false,
+  "real_swap_candles_demonstrated": false,
+  "event_to_strategy_latency": "UNKNOWN: decoder blocks real swap admission",
+  "independent_ledger_comparison": "NOT AVAILABLE: no second authorized independent source",
+  "training_enabled": false,
+  "live_execution_enabled": false,
+  "focused_tests": {
+    "stream_candles": 7,
+    "existing_indexer": 30,
+    "hour_oracle": 11,
+    "total": 48,
+    "passed": true,
+    "whole_suite_run": false
+  }
+}
