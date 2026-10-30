@@ -58,6 +58,15 @@ def format_report(report,events=()):
                     f" | rollbacks {evaluation.get('rollbacks',0)} | quote replay")
             elif evaluation:
                 lines.append('EXIT OOS | awaiting later rule-closed positions; no validated improvement yet')
+            if evaluation.get('challenger_id'):
+                lines.append(f"CHALLENGER {evaluation['challenger_id']} | {evaluation.get('current_challenger_positions',0)}/10 positions"
+                    f" | completed {evaluation.get('challengers_completed',0)} · cumulative {evaluation.get('total_evaluated_positions',0)} evaluated")
+            last=evaluation.get('last_decision')
+            if last:
+                lines.append(f"LAST CHALLENGER | {last['status']} · {last['metrics']['positions']} positions · {last.get('reason','progress saved')}")
+            event=evaluation.get('last_event') or {}
+            if event.get('reason') and event.get('status')!='validation_progressed':
+                lines.append(f"EXIT STATE | {event['status']}: {event['reason']}")
             monitoring=evaluation.get('monitoring',{})
             if monitoring:
                 lines.append(f"EXIT MONITOR | {monitoring['positions']} positions · net vs prior ${monitoring['net_improvement_usd']:+.2f}")

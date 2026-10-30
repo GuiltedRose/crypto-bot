@@ -125,5 +125,12 @@ def format_status(record,rules=None):
     text=_format_status(record,rules)
     if record.get('rolling_performance'):
         from trade_metrics import format_rolling
-        return text+'\n'+format_rolling(record['rolling_performance'])
+        text+='\n'+format_rolling(record['rolling_performance'])
+    evaluation=record.get('exit_evaluation') or {}
+    if evaluation.get('challenger_id'):
+        text+=(f"\nCHALLENGER {evaluation['challenger_id']} | {evaluation.get('current_challenger_positions',0)}/10 positions"
+               f" | completed {evaluation.get('challengers_completed',0)} · cumulative {evaluation.get('total_evaluated_positions',0)} evaluated")
+    event=evaluation.get('last_event') or {}
+    if event.get('reason') and event.get('status')!='validation_progressed':
+        text+=f"\nEXIT STATE | {event['status']}: {event['reason']}"
     return text

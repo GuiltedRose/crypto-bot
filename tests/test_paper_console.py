@@ -48,3 +48,14 @@ class PaperConsoleTests(unittest.TestCase):
         self.assertIn('virtual bankroll $85.00',text)
         self.assertIn('milestone $100.00',text)
         self.assertIn('not P&L',text)
+
+    def test_challenger_identity_and_historical_progress_are_visible(self):
+        report={'marked_equity_usd':6,'neural_training':{'samples':100,'wins':20,'losses':80,
+            'exit_model':{'samples':40,'wins':20,'losses':20,'trades':8,'evaluation':{
+                'challenger_id':'abc123','current_challenger_positions':2,
+                'challengers_completed':2,'total_evaluated_positions':22,
+                'last_decision':{'status':'rejected','metrics':{'positions':10}}}}}}
+        text=format_report(report)
+        self.assertIn('CHALLENGER abc123 | 2/10 positions',text)
+        self.assertIn('completed 2 · cumulative 22 evaluated',text)
+        self.assertIn('LAST CHALLENGER | rejected',text)

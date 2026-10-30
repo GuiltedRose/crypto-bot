@@ -84,3 +84,27 @@ class ExitEvaluationTests(unittest.TestCase):
                 result=update([],path)
                 self.assertFalse(result['evaluation']['approved'])
                 self.assertEqual(result['evaluation']['corpus_positions'],12)
+
+
+    def test_paper_and_live_restarts_preserve_challenger_weights_and_partial_progress(self):
+        import json
+        for name in ('paper','live'):
+            with self.subTest(mode=name),tempfile.TemporaryDirectory() as root:
+                groups,closed=dataset(12)
+                path=Path(root)/name/'exit_evaluation.json'
+                with patch('exit_evaluation.load_groups',return_value=groups),patch('exit_evaluation.baselines',return_value=closed),patch('exit_evaluation.train_groups',return_value=model()) as fit:
+                    update([],path);before=update([],path)
+                    saved=json.loads(path.read_text())['candidate']
+                    self.assertEqual(before['evaluation']['current_challenger_positions'],4)
+                    # Each call reopens the file, just as a fresh runner does.
+                    fit.side_effect=AssertionError('Restart must not retrain the challenger')
+                    restarted=update([],path)
+                    self.assertEqual(restarted['evaluation']['challenger_id'],saved['id'])
+                    after=json.loads(path.read_text())['candidate']
+                    self.assertEqual(after,saved)
+                    more,outcomes=dataset(2,start=4500,offset=12)
+                    groups.update(more);closed.update(outcomes)
+                    continued=update([],path)
+                    self.assertEqual(continued['evaluation']['current_challenger_positions'],6)
+                    self.assertEqual(continued['evaluation']['total_evaluated_positions'],6)
+                    self.assertEqual(continued['evaluation']['challenger_id'],saved['id'])

@@ -84,7 +84,16 @@ Exit champions require positive improvement with no worse replay drawdown or
 prediction metrics. Later deterioration rolls back to the previous champion,
 or to rule-based exits. All valid historical samples stay in the ledgers;
 consumed evaluation blocks can train later challengers, which need fresh tests.
-Evaluation state is saved in `exit_evaluation.json`. Unchanged data is cached.
+Evaluation state is saved in `exit_evaluation.json` with a transactional
+`exit_evaluation.checkpoint.sqlite` recovery checkpoint. Challenger IDs, frozen
+weights and partial evaluation counts survive process restarts in both runners.
+Console output distinguishes current progress from completed challengers and
+cumulative evaluated positions. A completed rejection starts a new challenger;
+it does not discard the previous result. Interrupted exports recover from the
+durable checkpoint. Missing observations or incompatible feature versions pause
+evaluation with an explicit reason; a restart alone never rejects a challenger.
+Saved position scores are immutable. Back up the whole state directory.
+Unchanged data is cached.
 
 Both paper and live summaries show `LIFETIME` totals alongside `LAST 20`: valid completed trades,
 net P&L, win rate, and wins/losses/break-even counts. A partial window shows its

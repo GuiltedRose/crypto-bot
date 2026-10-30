@@ -10,6 +10,7 @@ import math
 from pathlib import Path
 import sqlite3
 import statistics
+from evaluation_state import load as load_state,save as save_state
 from meme_learning import live_outcomes,paper_outcomes,model_features,weighted_prediction,new_weighted_model
 from neural_exits import load_groups,train_groups,samples_for
 
@@ -71,13 +72,19 @@ def position_score(model,quotes,baseline):
             'brier':sum(p[1] for p in predictions)/len(predictions) if predictions else None}
 
 
-def compare(model,reference,groups,closed,keys):
+def comparison_row(model,reference,quotes,baseline):
+    trial=position_score(model,quotes,baseline)
+    base=position_score(reference,quotes,baseline)
+    return {'delta':trial['net']-base['net'],'neural':trial['net'],'reference':base['net'],
+            'rule':baseline['net_pnl_usd'],'reference_accuracy':base['accuracy'],
+            'reference_brier':base['brier'],**{k:trial[k] for k in ('changed','accuracy','brier')}}
+
+
+def compare(model,reference,groups,closed,keys,saved_rows=None):
     rows=[]
     for key in sorted(keys,key=lambda k:(closed[k]['exit_at'],k)):
-        trial=position_score(model,groups[key],closed[key])
-        base=position_score(reference,groups[key],closed[key])
-        rows.append({'delta':trial['net']-base['net'],'neural':trial['net'],'reference':base['net'],
-                     'rule':closed[key]['net_pnl_usd'],'reference_accuracy':base['accuracy'],'reference_brier':base['brier'],**{k:trial[k] for k in ('changed','accuracy','brier')}})
+        rows.append(saved_rows[json.dumps(key)] if saved_rows is not None else
+                    comparison_row(model,reference,groups[key],closed[key]))
     deltas=[r['delta'] for r in rows]
     lower=(statistics.mean(deltas)-1.96*statistics.stdev(deltas)/math.sqrt(len(deltas))) if len(deltas)>1 else None
     def drawdown(field):
@@ -98,50 +105,158 @@ def compare(model,reference,groups,closed,keys):
             'basis':'position_grouped_out_of_sample_quote_replay_not_actual_fills'}
 
 
+def baseline_signature(row):
+    return {key:row.get(key) for key in ('entry_at','exit_at','exit_signature','exit_reason','net_pnl_usd')}
+
+
+def capture(candidate,key,quotes,baseline,reference):
+    encoded=json.dumps(key)
+    candidate['validation_ids'].append(encoded)
+    candidate['validation_rows'][encoded]=comparison_row(candidate['model'],reference,quotes,baseline)
+    candidate['validation_inputs'][encoded]={'quotes':copy.deepcopy(quotes),'baseline':baseline_signature(baseline)}
+
+
+def event_summary(event):
+    if not event:return None
+    return {key:event[key] for key in ('status','reason','candidate_id') if key in event}
+
+
+def pause(state,path,reason):
+    if state.get('recovery',{}).get('reason')!=reason:
+        state['history'].append({'status':'evaluation_paused','reason':reason})
+    state['recovery']={'status':'paused','reason':reason}
+    chosen=state.get('champion') or state.get('candidate')
+    model=copy.deepcopy(state.get('result') or (chosen['model'] if chosen else new_weighted_model()))
+    evaluation=model.setdefault('evaluation',{})
+    evaluation.update(approved=False,status='paused',recovery=state['recovery'],
+                      last_event=event_summary(state['history'][-1]))
+    # The original challenger, metrics, cutoff, and history remain in state.
+    save_state(path,state)
+    return model
+
+
 def update(paths,state_path):
     groups=load_groups(paths);closed=baselines(paths,groups)
     path=Path(state_path)
-    state=json.loads(path.read_text()) if path.exists() else {}
+    state,recovered=load_state(path)
     version=new_weighted_model()['version']
-    if state.get('version')!=version:state={'version':version,'history':[],'consumed_until':0}
+    if state is None:state={'version':version,'history':[],'consumed_until':0}
+    if recovered:
+        state['history'].append({'status':'state_recovered','reason':recovered})
+    if state.get('version')!=version:
+        return pause(state,path,'Saved challenger feature version differs from current code; explicit migration required')
+    state.setdefault('consumed_positions',[])
+    was_paused=state.get('recovery')
+
+    # Stable identity distinguishes a new experiment from a process restart.
+    upgraded=bool(recovered or was_paused)
+    for item in (state.get('candidate'),state.get('champion')):
+        if item and 'id' not in item:
+            item['id']=digest({'cutoff':item['cutoff'],'weights':item['model']['weights'],'training_rows':item['training_rows']})[:12]
+            upgraded=True
+    if state.get('candidate') and 'validation_ids' not in state['candidate']:
+        upgraded=True
     fingerprint=digest({'groups':[(key,rows) for key,rows in sorted(groups.items())],
                         'closed':[(key,row) for key,row in sorted(closed.items())]})
-    if state.get('fingerprint')==fingerprint and not state.get('pending_historical'):
+    if state.get('fingerprint')==fingerprint and not state.get('pending_historical') and not upgraded:
         return state['result']
     state['pending_historical']=False
     champion=state.get('champion');candidate=state.get('candidate')
-    # Training corrections invalidate learned models; appending later quotes does not.
-    def valid(item):
-        if not item:return True
-        original={key:rows for key,rows in item['training_rows']}
-        for encoded,rows in original.items():
-            current=[r for r in groups.get(tuple(json.loads(encoded)),[]) if r[0]<=item['cutoff']]
-            if digest(current)!=digest(rows):return False
-        return True
-    if not valid(champion):
-        state['history'].append({'status':'invalidated_champion'});state.pop('champion',None);champion=None
-        state.pop('evaluation',None);state.pop('monitoring',None)
-    if not valid(candidate):
-        state.pop('candidate',None);state.pop('evaluation',None);candidate=None
+    # Validate only the observations actually used to fit frozen weights.
+    # Late additions do not change the original training set.
+    def validity(item):
+        if not item:return None
+        for encoded,rows in item['training_rows']:
+            available={row[0]:row for row in groups.get(tuple(json.loads(encoded)),[])}
+            for row in rows:
+                if row[0] not in available:return ('missing',encoded,row[0])
+                if digest(available[row[0]])!=digest(row):return ('changed',encoded,row[0])
+        return None
+    for label,item in (('champion',champion),('candidate',candidate)):
+        problem=validity(item)
+        if problem and problem[0]=='missing':
+            return pause(state,path,f'{label} training observation unavailable: {problem[1]} at {problem[2]}; frozen state retained')
+        if problem:
+            reason=f'Previously used training observation corrected: {problem[1]} at {problem[2]}'
+            state['history'].append({'status':'invalidated_'+label,'candidate_id':item['id'],
+                                     'reason':reason,'snapshot':copy.deepcopy(item)})
+            state.pop(label,None)
+            state.pop('evaluation',None)
+            if label=='champion':champion=None;state.pop('monitoring',None)
+            else:candidate=None
+            upgraded=True
+    if candidate and 'reference_model' not in candidate:
+        candidate['reference_model']=copy.deepcopy(champion['model']) if champion else None
+        candidate['reference_id']=champion['id'] if champion else 'rules'
+        upgraded=True
     if champion:
         fresh=[k for k in closed if k in groups and closed[k]['entry_at']>champion.get('monitor_after',champion['activated_after'])]
         fresh=sorted(fresh,key=lambda k:(closed[k]['exit_at'],k))[:MIN_ROLLBACK_POSITIONS]
         if len(fresh)>=MIN_ROLLBACK_POSITIONS:
             metrics=compare(champion['model'],champion.get('previous_model'),groups,closed,fresh)
             champion['monitor_after']=max(closed[k]['exit_at'] for k in fresh)
+            champion['monitor_consumed_positions']=list(dict.fromkeys(
+                champion.get('monitor_consumed_positions',[])+[json.dumps(k) for k in fresh]))
             state['monitoring']=metrics
             if metrics['net_improvement_usd']<0:
                 previous=champion.get('previous_champion')
-                state['history'].append({'status':'rolled_back','metrics':metrics})
+                state['history'].append({'status':'rolled_back','reason':'Negative matched net improvement on fresh monitoring block',
+                    'candidate_id':champion['id'],'metrics':metrics,'snapshot':copy.deepcopy(champion),
+                    'position_ids':[json.dumps(k) for k in fresh]})
+                if candidate:
+                    state['history'].append({'status':'candidate_replaced','candidate_id':candidate['id'],
+                        'reason':'Champion rollback changed its comparison reference','snapshot':copy.deepcopy(candidate)})
                 if previous:previous['monitor_after']=champion['monitor_after']
                 state['champion']=previous;champion=previous
                 state['consumed_until']=max(state['consumed_until'],max(closed[k]['exit_at'] for k in fresh))
                 state.pop('candidate',None);candidate=None
     if candidate:
-        keys=[k for k in closed if k in groups and closed[k]['entry_at']>candidate['cutoff']]
-        keys=sorted(keys,key=lambda k:(closed[k]['exit_at'],k))[:MIN_EVALUATION_POSITIONS]
-        metrics=compare(candidate['model'],champion['model'] if champion else None,groups,closed,keys)
-        metrics['reference']='champion' if champion else 'rules'
+        reference=candidate['reference_model']
+        if 'validation_ids' not in candidate:
+            # Older state stored aggregates only: migrate only when the exact
+            # same scores can be recovered. Never replace saved percentages.
+            migrated=copy.deepcopy(candidate)
+            migrated['validation_ids']=[];migrated['validation_rows']={};migrated['validation_inputs']={}
+            previous=state.get('evaluation',{})
+            completed_metrics=[row.get('metrics') for row in state['history'] if row.get('status') in ('rejected','promoted')]
+            belongs_to_previous=any(digest(row)==digest(previous) for row in completed_metrics)
+            same_candidate=previous.get('candidate_id')==candidate['id'] or previous.get('candidate_id') is None and not belongs_to_previous
+            old_count=previous.get('positions',0) if same_candidate else 0
+            legacy=sorted([k for k in closed if k in groups and closed[k]['entry_at']>candidate['cutoff']],
+                          key=lambda k:(closed[k]['exit_at'],k))[:old_count]
+            reconstructed=compare(candidate['model'],reference,groups,closed,legacy)
+            for name in ('positions','accuracy','brier','net_improvement_usd'):
+                old=previous.get(name);new=reconstructed.get(name)
+                if old_count and (old is None)!=(new is None):
+                    return pause(state,path,'Legacy validation scores cannot be recovered exactly; saved metrics retained')
+                if old_count and old is not None and abs(old-new)>1e-10:
+                    return pause(state,path,'Legacy validation scores differ from saved metrics; explicit review required')
+            for key in legacy:capture(migrated,key,groups[key],closed[key],reference)
+            candidate.update(migrated)
+            state['history'].append({'status':'state_migrated','candidate_id':candidate['id'],
+                'reason':'Saved partial validation reconstructed exactly; frozen weights and scores retained'})
+            upgraded=True
+        for encoded in candidate['validation_ids']:
+            key=tuple(json.loads(encoded));saved=candidate['validation_inputs'][encoded]
+            if key not in closed or key not in groups:
+                return pause(state,path,'Previously evaluated position unavailable; validation progress retained: '+encoded)
+            # Existing scores are immutable. Corrections require an explicit pause.
+            available={row[0]:row for row in groups[key]}
+            if any(row[0] not in available or digest(row)!=digest(available[row[0]]) for row in saved['quotes']):
+                return pause(state,path,'Previously evaluated quote changed or unavailable; saved scores retained: '+encoded)
+            if baseline_signature(closed[key])!=saved['baseline']:
+                return pause(state,path,'Previously evaluated rule outcome changed; saved scores retained: '+encoded)
+        new_keys=[k for k in closed if k in groups and closed[k]['entry_at']>candidate['cutoff']
+                  and json.dumps(k) not in state['consumed_positions'] and json.dumps(k) not in candidate['validation_ids']]
+        for key in sorted(new_keys,key=lambda k:(closed[k]['exit_at'],k)):
+            if len(candidate['validation_ids'])>=MIN_EVALUATION_POSITIONS:break
+            capture(candidate,key,groups[key],closed[key],reference)
+            state['history'].append({'status':'validation_progressed','candidate_id':candidate['id'],
+                'reason':'Added a newly completed rule-closed position','position_id':json.dumps(key)})
+        keys=[tuple(json.loads(key)) for key in candidate['validation_ids']]
+        metrics=compare(candidate['model'],reference,groups,closed,keys,candidate['validation_rows'])
+        metrics['candidate_id']=candidate['id']
+        metrics['reference']=candidate['reference_id']
         state['evaluation']=metrics
         if len(keys)>=MIN_EVALUATION_POSITIONS:
             accepted=(metrics['accuracy'] is not None and metrics['neural_net_usd']>0
@@ -149,7 +264,10 @@ def update(paths,state_path):
                 and metrics['changed_positions']>=3 and metrics['improvement_lower_usd']>0
                 and metrics['neural_drawdown_usd']<=metrics['reference_drawdown_usd'])
             end=max(closed[k]['exit_at'] for k in keys)
-            state['history'].append({'status':'promoted' if accepted else 'rejected','metrics':metrics})
+            state['history'].append({'status':'promoted' if accepted else 'rejected','candidate_id':candidate['id'],'metrics':metrics,
+                'reason':'Passed frozen position-grouped comparison' if accepted else 'Completed comparison did not meet unchanged promotion requirements',
+                'snapshot':copy.deepcopy(candidate)})
+            state['consumed_positions']=list(dict.fromkeys(state['consumed_positions']+candidate['validation_ids']))
             state['consumed_until']=max(state['consumed_until'],end)
             if accepted:
                 activation=max([r['exit_at'] for r in closed.values()]+[rows[-1][0] for rows in groups.values()])
@@ -166,18 +284,34 @@ def update(paths,state_path):
         if model['samples']>=30 and model['trades']>=5 and min(model['wins'],model['losses'])>=5:
             candidate={'model':model,'cutoff':cutoff,'training_rows':[
                 (json.dumps(key),groups[key]) for key in training]}
+            candidate['id']=digest({'cutoff':cutoff,'weights':model['weights'],'training_rows':candidate['training_rows']})[:12]
+            candidate.update(validation_ids=[],validation_rows={},validation_inputs={},
+                reference_model=copy.deepcopy(champion['model']) if champion else None,reference_id=champion['id'] if champion else 'rules')
             state['candidate']=candidate
+            state['history'].append({'status':'candidate_created','candidate_id':candidate['id'],
+                'reason':'Initial frozen challenger' if not state['history'] else 'Fresh challenger after recorded lifecycle decision',
+                'cutoff':cutoff})
             state['pending_historical']=any(row['entry_at']>cutoff for row in closed.values())
     chosen=champion or candidate
     model=copy.deepcopy(chosen['model']) if chosen else train_groups(groups)
-    model['evaluation']={'approved':champion is not None,'status':'champion' if champion else 'collecting',
+    completed=[row for row in state['history'] if row['status'] in ('promoted','rejected')]
+    current=state.get('evaluation',{})
+    pending_positions=current.get('positions',0) if candidate and current.get('candidate_id')==candidate['id'] else 0
+    model['evaluation']={'challenger_id':candidate['id'] if candidate else None,
+        'challengers_completed':len(completed),
+        'total_evaluated_positions':sum(row['metrics']['positions'] for row in completed)+pending_positions,
+        'current_challenger_positions':pending_positions,
+        'last_decision':({**event_summary(completed[-1]),'metrics':completed[-1]['metrics']} if completed else None),
+        'approved':champion is not None,'status':'champion' if champion else 'collecting',
         'oos':state.get('evaluation',{}),'monitoring':state.get('monitoring',{}),
         'rollbacks':sum(row['status']=='rolled_back' for row in state['history']),
         'corpus_positions':len(groups),'corpus_samples':len(samples_for(groups))}
     state['fingerprint']=fingerprint
     state['result']=model
-    path.parent.mkdir(parents=True,exist_ok=True)
-    raw=json.dumps(state,sort_keys=True,allow_nan=False)
-    if not path.exists() or path.read_text()!=raw:
-        temporary=path.with_suffix('.tmp');temporary.write_text(raw);temporary.replace(path)
+    if was_paused:
+        state['history'].append({'status':'evaluation_resumed','reason':'Required observations are available and unchanged; frozen challenger resumed'})
+    state.pop('recovery',None)
+    state['last_lifecycle_event']=state['history'][-1] if state['history'] else None
+    model['evaluation']['last_event']=event_summary(state['last_lifecycle_event'])
+    save_state(path,state)
     return model

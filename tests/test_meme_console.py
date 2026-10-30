@@ -60,3 +60,12 @@ class StartupDiagnosticsTests(unittest.TestCase):
     def test_duplicate_runner_is_actionable(self):
         from run_meme_live import startup_error
         self.assertIn('Stop the old process',startup_error(BlockingIOError()))
+
+
+class ChallengerPersistenceDisplayTests(unittest.TestCase):
+    def test_live_summary_shows_saved_challenger_progress(self):
+        text=format_status({'timestamp':0,'mode':'live','status':'holding','exit_evaluation':{
+            'challenger_id':'abc123','current_challenger_positions':2,
+            'challengers_completed':2,'total_evaluated_positions':22}})
+        self.assertIn('CHALLENGER abc123 | 2/10 positions',text)
+        self.assertIn('completed 2 · cumulative 22 evaluated',text)

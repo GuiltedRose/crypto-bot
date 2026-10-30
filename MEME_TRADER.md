@@ -1426,3 +1426,28 @@ with native fee-reserve headroom. Reset funding is an audited zero-P&L event,
 atomically recorded with the new run; it never counts as a trade or training win.
 Open positions block resets, all completed outcomes remain, and live controls
 and live balances are unchanged. `--no-auto-reset` still disables auto-refills.
+
+### Restart-safe challenger recovery
+
+Paper and live use the same `evaluation_state.py` loader and transactional
+checkpoint writer. A SQLite checkpoint commits the full evaluator state before
+its fsynced JSON export is replaced. On restart the newest valid committed
+checkpoint wins; an interrupted/partial export does not roll progress backward.
+An unrecoverable checkpoint blocks evaluation instead of initializing a new one.
+Recovery events and reasons are recorded in lifecycle history and console output.
+
+The exact frozen weights, challenger ID, cutoff, training observations, validated
+position IDs and per-position scores, consumed IDs, champion and rollback history
+are retained. Existing validation scores are not recomputed merely because the
+process restarted. Newly arriving historical quotes are not treated as edits to
+observations already used for training. Missing source history or incompatible
+feature versions pauses the experiment without failing or replacing it. A true
+training correction is explicitly logged with the original model snapshot.
+Legacy aggregate-only validation is migrated only if its saved scores can be
+reconstructed exactly; otherwise it pauses and preserves its old percentages.
+
+Completed rejections/promotions still create new independent challengers under
+the same unchanged evaluation requirements, with explicit reasons and archived
+snapshots. No learning parameters, risk controls or live-execution permissions
+are changed by recovery. Preserve `exit_evaluation.json`, its checkpoint database
+and the underlying outcome journals together when backing up state.
