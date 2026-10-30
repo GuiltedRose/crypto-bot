@@ -311,7 +311,7 @@ class PaperDipTrader:
                 self.strategy_realized_pnl_usd+=pnl
                 self.consecutive_losses=self.consecutive_losses+1 if pnl<0 else 0
                 if self.consecutive_losses>=r.loss_streak_limit:
-                    self.loss_cooldown_until=now+r.loss_streak_cooldown_seconds
+                    self.loss_cooldown_until=now+getattr(self,'paper_loss_cooldown_seconds',r.loss_streak_cooldown_seconds)
                 self.mark_risk(self.equity())
                 return {'action': 'paper_sell', 'mint': mint, 'pnl_usd': pnl, 'cash_usd': self.cash,'native_sol':self.native_sol,
                         'reason': 'drawdown halt' if self.halted else 'stop' if stop_hit else 'time limit' if time_exit and not target_hit else 'target'}

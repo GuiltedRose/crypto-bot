@@ -146,10 +146,12 @@ def main():
     parser.add_argument('--interval', type=float, default=60)
     parser.add_argument('--status', action='store_true')
     parser.add_argument('--reclaim-paper-rent',action='store_true',help='Return eligible simulated account rent to virtual SOL; never touches the real wallet')
+    parser.add_argument('--loss-cooldown-seconds',type=int,default=60,help='Paper-only pause after consecutive losses (default 60; use 3600 to match live)')
     parser.add_argument('--no-auto-reset',action='store_true',help='Keep exhausted/drawdown-halted virtual runs stopped instead of archiving and refilling')
     parser.add_argument('--learning-live-db',type=Path,default=Path('state/meme_live/meme_live.sqlite'),help='Read-only confirmed bot outcomes for shared neural training')
     parser.add_argument('--reset', action='store_true', help='Archive current paper run and start fresh; never touches live state')
     args = parser.parse_args()
+    if not 0<=args.loss_cooldown_seconds<=86400: parser.error('Paper cooldown must be 0 through 86400 seconds')
     if args.reset and args.reclaim_paper_rent:
         parser.error('Reset and paper rent reclaim are separate actions')
     if not 10 <= args.interval <= 3600:
@@ -230,6 +232,7 @@ def main():
             narratives = NarrativeStore(args.state_dir/'narratives.sqlite')
         while True:
             reset_event=session.auto_reset_if_exhausted() if not args.no_auto_reset and not args.feed else None
+            session.configure_loss_cooldown(args.loss_cooldown_seconds)
             try:
                 status = feed_once(session, args.feed) if args.feed else markets_once(session, sources, args.mint, args.discover, narratives, watcher, args.watch_wallet)
             except (OSError, ValueError) as error:
@@ -241,7 +244,9 @@ def main():
                     status=dict(status,learning_error=type(error).__name__)
             if reset_event: status=dict(status,balance_reset=reset_event)
             report = session.publish(status)
-            print(json.dumps({'mode': 'paper_only', 'run_id': session.run_id, 'source_status': status,
+            print(json.dumps({'mode': 'paper_only', 'run_id': session.run_id, 'source_status':{k:v for k,v in status.items() if k!='wallet_watch'},
+                              'entry_blockers':sorted({e.get('reason','') for e in report['recent_events'] if e.get('action') in ('reject','watch')}),
+                              'cooldown_until':report['loss_cooldown_until'],
                               'equity_usd': report['marked_equity_usd'], 'events': report['event_counts'],
                               'neural_training':report['neural_training']}), flush=True)
             if not args.loop:

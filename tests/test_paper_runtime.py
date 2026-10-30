@@ -78,6 +78,23 @@ class PaperRuntimeTests(unittest.TestCase):
             self.assertEqual(session.trader.cash,10)
         finally:session.close()
 
+    def test_paper_cooldown_shortens_existing_wait_and_survives_restart(self):
+        session=PaperSession(self.directory,10)
+        session.trader.consecutive_losses=2
+        session.trader.loss_cooldown_until=4600  # Loss at 1000, original pause 3600.
+        session.configure_loss_cooldown(60)
+        self.assertEqual(session.trader.loss_cooldown_until,1060)
+        self.assertEqual(session.trader.rules.loss_streak_cooldown_seconds,3600)
+        self.assertEqual(session.process(self.snapshot_at(1050,.6))['reason'],'paper consecutive-loss cooldown')
+        session.close()
+        session=PaperSession(self.directory)
+        try:
+            self.assertEqual(session.trader.paper_loss_cooldown_seconds,60)
+            self.assertEqual(session.trader.consecutive_losses,2)
+            result=session.process(self.snapshot_at(1060,.6))
+            self.assertNotEqual(result.get('reason'),'paper consecutive-loss cooldown')
+        finally:session.close()
+
     def test_reset_archives_positions_and_all_events(self):
         session = PaperSession(self.directory, 10, DipRules(rebound_fraction=0))
         session.process(self.snapshot_at(1010, .6))

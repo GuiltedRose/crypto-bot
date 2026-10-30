@@ -1278,3 +1278,12 @@ weights; losses and break-even outcomes retain negative labels. The neural veto
 threshold is 2/3 to compensate for that multiplier, with prospective qualification
 still required. Scores are uncalibrated. Model v2 rebuilds from eligible outcomes
 and invalidates v1 candidates rather than mixing training policies.
+
+### Paper exploration cooldown
+
+`run_paper.py` defaults to a 60-second paper-only consecutive-loss cooldown.
+`--loss-cooldown-seconds 0` disables that paper pause; `3600` matches live.
+The override is checkpointed and audited, preserves loss history, and shortens
+an existing wait from its original loss timestamp. It does not loosen live
+entry rules or bypass prospective neural qualification. Console output lists
+recent entry blockers; full wallet context remains in the report.

@@ -20,6 +20,7 @@ def encode_state(trader):
             'strategy_realized_pnl_usd':trader.strategy_realized_pnl_usd,'strategy_risk':trader.strategy_risk,'peak': trader.peak, 'position': trader.position, 'halted': trader.halted,
             'last_timestamp': trader.last_timestamp,'consecutive_losses':trader.consecutive_losses,
             'loss_cooldown_until':trader.loss_cooldown_until,
+            'paper_loss_cooldown_seconds':getattr(trader,'paper_loss_cooldown_seconds',trader.rules.loss_streak_cooldown_seconds),
             'account_rent':[[list(key),value] for key,value in trader.account_rent.items()],
             'last_entry_bars':[[list(key),value] for key,value in trader.last_entry_bars.items()],
             'armed': [[list(key), value] for key, value in trader.armed.items()],
@@ -38,6 +39,7 @@ def decode_state(state):
     trader.strategy_risk=state.get('strategy_risk',{})
     trader.consecutive_losses=state.get('consecutive_losses',0)
     trader.loss_cooldown_until=state.get('loss_cooldown_until',0)
+    trader.paper_loss_cooldown_seconds=state.get('paper_loss_cooldown_seconds',trader.rules.loss_streak_cooldown_seconds)
     trader.account_rent={tuple(key):value for key,value in state.get('account_rent',[])}
     trader.last_entry_bars={tuple(key):value for key,value in state.get('last_entry_bars',[])}
     trader.armed = {tuple(key): value for key, value in state['armed']}
@@ -167,6 +169,23 @@ class PaperSession:
         self.trader=candidate
         return event
 
+    def configure_loss_cooldown(self,seconds):
+        if type(seconds) is not int or not 0<=seconds<=86400:
+            raise ValueError('Paper cooldown must be 0 through 86400 seconds')
+        trader=self.trader
+        old=getattr(trader,'paper_loss_cooldown_seconds',trader.rules.loss_streak_cooldown_seconds)
+        if old==seconds: return
+        # Preserve the loss timestamp and history rather than restarting the wait.
+        if trader.loss_cooldown_until:
+            trader.loss_cooldown_until=max(0,trader.loss_cooldown_until-old+seconds)
+        trader.paper_loss_cooldown_seconds=seconds
+        with self.db:
+            self.db.execute('INSERT INTO paper_events(run_id,fingerprint,observed,event,snapshot) VALUES(?,?,?,?,?)',
+                (self.run_id,str(uuid.uuid4()),time.time(),json.dumps({'action':'paper_cooldown_configured',
+                 'old_seconds':old,'new_seconds':seconds,'data_kind':'paper_accounting','pnl_usd':0}),'{}'))
+            self.db.execute('UPDATE paper_runs SET checkpoint=? WHERE id=?',
+                (json.dumps(encode_state(trader)),self.run_id))
+
     def refresh_learning(self,live_db=None,wallet_db=None,wallets=()):
         """Paper owns this artifact; live separately rebuilds the same shared model."""
         from meme_learning import paper_outcomes,live_outcomes,train_shared_model
@@ -237,6 +256,7 @@ class PaperSession:
                 'position': position, 'drawdown_halted': self.trader.halted,
                 'consecutive_losses':self.trader.consecutive_losses,
                 'loss_cooldown_until':self.trader.loss_cooldown_until,
+                'paper_loss_cooldown_seconds':getattr(self.trader,'paper_loss_cooldown_seconds',self.trader.rules.loss_streak_cooldown_seconds),
                 'rules': asdict(self.trader.rules), 'event_counts': counts,
                 'data_kinds': sorted(data_kinds),
                 'safety_evidence_mode':self.trader.rules.evidence_mode,'drawdown_scope':'bot_positions' if self.trader.rules.entry_style=='volume_candles' else 'virtual_wallet',

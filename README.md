@@ -88,6 +88,11 @@ Export outcome summaries and neural weights:
 .venv/bin/python meme_learning.py --paper-db state/paper_volume/paper.sqlite
 ```
 
+Paper pauses for 60 seconds after consecutive losses. Use
+`--loss-cooldown-seconds 3600` to match the live pause, or `0` for uninterrupted
+paper exploration. This does not change the live rules or qualify the network.
+Detailed wallet observations stay in the report rather than flooding the console.
+
 Reports and journals stay in the selected state directory. By default, exhausted or drawdown-halted paper runs archive
 and refill their original virtual inventory when flat. `--no-auto-reset` keeps
 them stopped instead. Offline `--feed` replay does not auto-reset. See the
