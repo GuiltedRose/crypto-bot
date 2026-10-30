@@ -52,6 +52,8 @@ def candidate_queue(session,position,mints,ranked,discovered,limit=6):
 def markets_once(session, sources, mints, discover=False, narrative_store=None, watcher=None, wallets=()):
     errors, skipped, discovered, watched = {}, {}, [], []
     position = session.trader.position
+    held_positions=session.trader.all_positions()
+    held_mints={p['mint'] for p in held_positions}
     processed = 0
     watch_report = None
     retained=None
@@ -84,8 +86,8 @@ def markets_once(session, sources, mints, discover=False, narrative_store=None, 
             errors[mint] = source_error(error)
 
     # A discovery/RPC outage must not postpone the first open-position quote.
-    if position:
-        observe(position['mint'], position['pool'])
+    for held in held_positions:
+        observe(held['mint'],held['pool'])
     if discover:
         try:
             leads = sources.discover()
@@ -104,11 +106,11 @@ def markets_once(session, sources, mints, discover=False, narrative_store=None, 
                 errors['wallet_watch'] = {'status': watch_report.get('status', 'incomplete'), 'wallets': watch_report['errors']}
         except Exception as error:
             errors['wallet_watch'] = source_error(error)
-    queue = candidate_queue(session,position,mints,watched,discovered,10 if session.trader.rules.entry_style=='volume_candles' else 6)
+    queue = candidate_queue(session,position,list(held_mints)+list(mints),watched,discovered,10 if session.trader.rules.entry_style=='volume_candles' else 6)
     if retained:
         queue=list(dict.fromkeys(([position['mint']] if position else [])+retained.due(10)+queue))[:10]
     for mint in queue:
-        if position and mint == position['mint']:
+        if mint in held_mints:
             continue
         observe(mint)
     if errors:
@@ -119,7 +121,7 @@ def markets_once(session, sources, mints, discover=False, narrative_store=None, 
                                (json.dumps(encode_state(session.trader)), session.run_id))
     return {'status': 'incomplete' if errors else 'ok', 'processed': processed,
             'sources': errors, 'skipped_markets':skipped,'candidate_mints': queue, 'wallet_watch': watch_report,
-            'open_position_quote_unavailable': bool(position and position['mint'] in errors)}
+            'open_position_quote_unavailable': any(mint in errors for mint in held_mints)}
 
 
 def main():
@@ -129,6 +131,8 @@ def main():
     parser.add_argument('--balance', type=float, help='Starting virtual USDC; required for a new run/reset')
     parser.add_argument('--native-sol', type=float, help='Optional virtual native SOL; enables execution-cost/reserve ledger')
     parser.add_argument('--sol-price', type=float, help='Initial SOL/USD valuation when using --native-sol')
+    parser.add_argument('--max-positions',type=int,default=4,help='Concurrent paper positions sharing one bankroll (1 through 8; default 4)')
+    parser.add_argument('--neural-mode',choices=['learning','shadow'],default='learning',help='Online neural veto with one-quarter exploration, or shadow-only scoring')
     parser.add_argument('--profile',choices=['current','moderate','aggressive','adaptive'],help='Shared entry-tolerance profile; existing runs require reset or a fresh state directory')
     parser.add_argument('--adopt-rules',action='store_true',help='Explicitly adopt profile-mode/drawdown-schedule changes under identical other rules; preserves balances, positions, losses and existing halts')
     parser.add_argument('--rules', type=Path)
@@ -146,11 +150,12 @@ def main():
     parser.add_argument('--interval', type=float, default=60)
     parser.add_argument('--status', action='store_true')
     parser.add_argument('--reclaim-paper-rent',action='store_true',help='Return eligible simulated account rent to virtual SOL; never touches the real wallet')
-    parser.add_argument('--loss-cooldown-seconds',type=int,default=60,help='Paper-only pause after consecutive losses (default 60; use 3600 to match live)')
+    parser.add_argument('--loss-cooldown-seconds',type=int,default=0,help='Paper-only pause after consecutive losses (default 0; use 3600 to match live)')
     parser.add_argument('--no-auto-reset',action='store_true',help='Keep exhausted/drawdown-halted virtual runs stopped instead of archiving and refilling')
     parser.add_argument('--learning-live-db',type=Path,default=Path('state/meme_live/meme_live.sqlite'),help='Read-only confirmed bot outcomes for shared neural training')
     parser.add_argument('--reset', action='store_true', help='Archive current paper run and start fresh; never touches live state')
     args = parser.parse_args()
+    if not 1<=args.max_positions<=8: parser.error('Paper positions must be 1 through 8')
     if not 0<=args.loss_cooldown_seconds<=86400: parser.error('Paper cooldown must be 0 through 86400 seconds')
     if args.reset and args.reclaim_paper_rent:
         parser.error('Reset and paper rent reclaim are separate actions')
@@ -230,25 +235,31 @@ def main():
             watcher = SharedWalletFeed(args.wallet_source_dir)
         if args.discover:
             narratives = NarrativeStore(args.state_dir/'narratives.sqlite')
+        try:
+            session.refresh_learning(args.learning_live_db,args.wallet_source_dir/'wallet_watch.sqlite',args.watch_wallet)
+        except (OSError,ValueError,sqlite3.Error):
+            pass
         while True:
             reset_event=session.auto_reset_if_exhausted() if not args.no_auto_reset and not args.feed else None
             session.configure_loss_cooldown(args.loss_cooldown_seconds)
+            session.configure_positions(args.max_positions)
+            session.neural_mode=args.neural_mode
             try:
                 status = feed_once(session, args.feed) if args.feed else markets_once(session, sources, args.mint, args.discover, narratives, watcher, args.watch_wallet)
             except (OSError, ValueError) as error:
                 status = source_error(error)
-            if not session.trader.position:
-                try:
-                    session.refresh_learning(args.learning_live_db,args.wallet_source_dir/'wallet_watch.sqlite',args.watch_wallet)
-                except (OSError,ValueError,sqlite3.Error) as error:
-                    status=dict(status,learning_error=type(error).__name__)
+            try:
+                session.refresh_learning(args.learning_live_db,args.wallet_source_dir/'wallet_watch.sqlite',args.watch_wallet)
+            except (OSError,ValueError,sqlite3.Error) as error:
+                status=dict(status,learning_error=type(error).__name__)
             if reset_event: status=dict(status,balance_reset=reset_event)
             report = session.publish(status)
             print(json.dumps({'mode': 'paper_only', 'run_id': session.run_id, 'source_status':{k:v for k,v in status.items() if k!='wallet_watch'},
                               'entry_blockers':sorted({e.get('reason','') for e in report['recent_events'] if e.get('action') in ('reject','watch')}),
                               'cooldown_until':report['loss_cooldown_until'],
                               'equity_usd': report['marked_equity_usd'], 'events': report['event_counts'],
-                              'neural_training':report['neural_training']}), flush=True)
+                              'neural_training':report['neural_training'],'neural_mode':report['neural_mode'],
+                              'open_positions':len(report['positions']),'max_positions':report['max_positions']}), flush=True)
             if not args.loop:
                 break
             # Short sleeps permit prompt interruption even with a long polling interval.

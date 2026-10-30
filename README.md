@@ -28,19 +28,31 @@ The neural network learns from eligible completed paper trades, confirmed bot
 trades, and receipt-backed outcomes from configured saved wallets. Both wins
 and losses contribute. Positive outcomes receive a 2x multiplier on top of
 class-frequency weighting; the selection threshold compensates for this bias.
-Scores remain uncalibrated and must pass prospective qualification. Completed paper outcomes remain available across balance
+Scores remain uncalibrated; online selection is experimental, not validated profitability. Completed paper outcomes remain available across balance
 resets; refills, rent returns, voided fills, and synthetic trades are not profit
 labels. Paper results remain modeled data, separate from confirmed live returns.
 
-Training runs while flat, including entry cooldowns. Paper saves its model to
+Paper training refreshes between scans, including while other paper positions
+are open. Live training refreshes while flat so it cannot delay exits. Paper saves its model to
 `learning.json` in its state directory; the meme runner rebuilds shared weights
 from the outcome ledgers. Its default paper source is `state/paper_volume/paper.sqlite`.
 
-A frozen candidate must qualify on later confirmed bot trades before influencing
-entries. A qualified model can veto an entry, while existing sizing, safety,
-execution, and exit rules remain mandatory. Deteriorating models roll back.
+Both runners default to `--neural-mode learning`: after 30 eligible outcomes,
+the current neural weights may veto otherwise eligible entries below the 2/3
+score threshold. Live retains its position limit, cooldown, sizing, safety and
+execution checks; neural scores never bypass them. No live process is started
+by training alone.
+
+Paper defaults to four distinct positions sharing one virtual bankroll, no
+loss cooldown, and exploration of one quarter of below-threshold candidates.
+This keeps gathering genuine modeled outcomes even when the network rejects
+most setups. Paper fills remain hypothetical and cannot establish a live edge.
+
+For the stricter live policy, use `--neural-mode qualified`: a frozen candidate
+must pass prospective confirmed-live evaluation first. Use `--neural-mode off`
+for live rule-only entries or `--neural-mode shadow` for paper rule-only entries.
 See the [qualification policy](MEME_TRADER.md#autonomous-neural-qualification)
-and [network review](research/neural_network_review.md) for details.
+and [network review](research/neural_network_review.md).
 
 ## Getting started
 
@@ -88,9 +100,10 @@ Export outcome summaries and neural weights:
 .venv/bin/python meme_learning.py --paper-db state/paper_volume/paper.sqlite
 ```
 
-Paper pauses for 60 seconds after consecutive losses. Use
-`--loss-cooldown-seconds 3600` to match the live pause, or `0` for uninterrupted
-paper exploration. This does not change the live rules or qualify the network.
+Paper defaults to `--max-positions 4 --loss-cooldown-seconds 0`. Up to eight
+slots are supported, subject to the shared spendable bankroll and costs. Use
+`--max-positions 1 --loss-cooldown-seconds 3600` for a single-position paper trial
+with the live-length cooldown. These options never change live limits.
 Detailed wallet observations stay in the report rather than flooding the console.
 
 Reports and journals stay in the selected state directory. By default, exhausted or drawdown-halted paper runs archive

@@ -205,6 +205,7 @@ def main():
     parser.add_argument('--risk-rpc',help='Optional HTTPS read-only RPC for indexed holder/trade queries; never receives signed transactions')
     parser.add_argument('--reconcile-only',action='store_true',help='Check the original pending transaction once; never scan, sign or submit a new order')
     parser.add_argument('--adopt-rules',action='store_true',help='Explicitly adopt changed rules only when flat with no unresolved orders; preserves P&L and drawdown halt')
+    parser.add_argument('--neural-mode',choices=['learning','qualified','off'],default='learning',help='Experimental online entry veto (default); qualified requires prospective evidence; off uses rule entries')
     parser.add_argument('--profile',choices=['current','moderate','aggressive','adaptive'],help='Shared entry-tolerance profile; dollar limits and slippage are unchanged')
     parser.add_argument('--rules',type=Path,default=Path('meme_live_rules.json'))
     parser.add_argument('--state-dir',type=Path)
@@ -265,6 +266,7 @@ def main():
                 if risk_rpc.call('getGenesisHash',[])!=MAINNET_GENESIS: raise ValueError('Risk RPC must be mainnet')
             risk_assessor=OnchainRisk(risk_rpc)
         engine=MemeLiveEngine(rpc,user,store,rules,orders,signer,risk_assessor=risk_assessor,fixed_profile=args.profile if args.profile!='adaptive' else None)
+        engine.neural_mode=args.neural_mode
         def publish(result):
             record={'timestamp':time.time(),'mode':'live' if args.execute else 'unsigned_simulation',**result}
             tmp=directory/'status.tmp';tmp.write_text(json.dumps(record,allow_nan=False));tmp.replace(directory/'status.json')

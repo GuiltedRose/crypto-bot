@@ -193,9 +193,35 @@ optimization. The fixed one-hour pause after two consecutive confirmed losses
 is a risk guard, not a learned profitability claim. Manual receipt deltas do
 not become profit labels before cost/rent reconstruction.
 
+### Online selection and concurrent paper exploration
+
+Both runners now default to `--neural-mode learning`. Once there are 30 eligible
+outcomes, the current model may veto entries with scores below 2/3. These scores
+are experimental and uncalibrated; this mode does not wait for prospective
+qualification or claim that it has passed. Live remains one position with its
+existing loss cooldown and risk/execution limits. The network never authorizes
+an entry that fails those controls. Use `--neural-mode qualified` for the frozen
+qualification policy below, or `--neural-mode off` for rule-only live entries.
+Online-filtered live outcomes are excluded from frozen-candidate qualification
+because they do not represent the unfiltered incumbent comparison.
+
+Paper defaults to four positions (`--max-positions 1` through `8`) and zero
+loss cooldown. Positions share cash, SOL, fee reserves, rent, and drawdown state;
+capital is never multiplied by the number of slots. Open positions persist and
+all receive exit quotes before entry scanning. Resets require all positions to
+be closed. Completed overlapping trades pair by mint in the training ledger.
+
+Paper `learning` mode applies the same score veto but explores one quarter of
+below-threshold candidates, chosen deterministically by mint and observation
+time. It uses ordinary modeled fees and fills; synthetic trades are not added.
+This avoids a permanent learning stall when the model rejects most candidates.
+`--neural-mode shadow` keeps paper entries governed by rules alone. Paper models
+refresh between scans even while other paper positions remain open. Increased
+sample count does not make correlated simulations independent evidence.
+
 ### Autonomous neural qualification
 
-The existing rule strategy continues selecting trades while the network learns.
+In `--neural-mode qualified`, the rule strategy continues selecting trades while the network learns.
 Thirty eligible training closes permit freezing a candidate; its weights and
 2/3 score threshold stay fixed throughout prospective validation. Each later
 entry records that candidate's score before submission. Paper and followed-wallet
@@ -1281,7 +1307,7 @@ and invalidates v1 candidates rather than mixing training policies.
 
 ### Paper exploration cooldown
 
-`run_paper.py` defaults to a 60-second paper-only consecutive-loss cooldown.
+`run_paper.py` defaults to no paper-only consecutive-loss cooldown.
 `--loss-cooldown-seconds 0` disables that paper pause; `3600` matches live.
 The override is checkpointed and audited, preserves loss history, and shortens
 an existing wait from its original loss timestamp. It does not loosen live

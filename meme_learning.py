@@ -219,7 +219,7 @@ def paper_outcomes(path):
     result=[];unclosed=[];unmatched=0
     try:
         for run,archived in db.execute('SELECT id,archived FROM paper_runs ORDER BY created').fetchall():
-            opened=None
+            opened={}
             rows=db.execute('SELECT sequence,observed,event,snapshot FROM paper_events WHERE run_id=? ORDER BY sequence',(run,)).fetchall()
             # Corrections may arrive after a close. Never learn an earlier label
             # from a run whose paper fills were reimbursed/voided. Rent reclaim
@@ -228,26 +228,27 @@ def paper_outcomes(path):
             for sequence,at,event_raw,snapshot_raw in rows:
                 event=json.loads(event_raw);snapshot=json.loads(snapshot_raw)
                 if event['action']=='paper_buy':
-                    if opened: unmatched+=1
-                    context=dict(snapshot)
+                    if event['mint'] in opened: unmatched+=1
+                    context=dict(event.get('entry_context') or snapshot)
                     context['flow_metrics']=_flow_metrics(snapshot)
                     signal_metrics=event.get('signal_metrics')
                     if not isinstance(signal_metrics,dict):
                         signal_metrics={'pullback_fraction':event.get('pullback_fraction')}
                     context['signal']={'metrics':signal_metrics}
-                    opened={'source':'bot_paper','run_id':run,'mint':event['mint'],'entry_at':at,
+                    opened[event['mint']]={'source':'bot_paper','run_id':run,'mint':event['mint'],'entry_at':at,
                             'entry_profile':event.get('entry_profile'),'entry_context':context,
                             'entry_data_kind':event.get('data_kind','supplied_observation'),
                             'training_eligible':not corrected and event.get('data_kind')!='synthetic' and snapshot.get('synthetic') is not True,
                             'status':'open'}
                 elif event['action']=='paper_sell':
-                    if not opened or opened['mint']!=event['mint']: unmatched+=1;continue
-                    result.append({**opened,'exit_at':at,'exit_signature':f'paper:{run}:{sequence}',
+                    if event['mint'] not in opened: unmatched+=1;continue
+                    entry=opened.pop(event['mint'])
+                    result.append({**entry,'exit_at':at,'exit_signature':f'paper:{run}:{sequence}',
                                    'net_pnl_usd':event['pnl_usd'],'exit_reason':event.get('reason'),
                                    'status':'closed','label_kind':'modeled_paper_pnl',
-                                   'training_eligible':opened['training_eligible'] and event.get('data_kind')!='synthetic' and snapshot.get('synthetic') is not True})
-                    opened=None
-            if opened: unclosed.append(opened)
+                                   'training_eligible':entry['training_eligible'] and event.get('data_kind')!='synthetic' and snapshot.get('synthetic') is not True})
+
+            unclosed.extend(opened.values())
     finally: db.close()
     return result,unclosed,[],unmatched
 

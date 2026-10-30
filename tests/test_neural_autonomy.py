@@ -135,3 +135,29 @@ class AutonomyTests(unittest.TestCase):
         changed=advance(state,trained(),[],{},1)
         self.assertNotEqual(changed['candidate']['id'],old_id)
         self.assertEqual(changed['status'],'collecting')
+
+
+    def test_online_live_mode_vetoes_without_claiming_qualification(self):
+        import tempfile
+        from meme_live import MemeLiveStore,MemeLiveEngine
+        from test_momentum_reclaim import policy,setup
+        from test_meme_live import FakeAdapter
+        with tempfile.TemporaryDirectory() as root:
+            store=MemeLiveStore(root,'user',policy())
+            try:
+                model=trained();model['weights']['output_weights']=[0.]*8
+                model['weights']['output_bias']=-8.
+                store.state['learning_model_live']=model
+                engine=MemeLiveEngine({},'user',store,policy(),adapter_factory=FakeAdapter)
+                engine.neural_mode='learning'
+                row=setup();row.pop('execution');row['market_kind']='bonding_curve'
+                decision=engine.prepare(row,100,6.5,1200)
+                self.assertEqual(decision['status'],'neural_entry_veto')
+                self.assertFalse(decision['neural_selection']['qualified'])
+                model['weights']['output_bias']=8.
+                # Positive score never bypasses mandatory execution/risk screening.
+                self.assertEqual(engine.prepare(row,100,6.5,1200)['status'],'onchain_risk_unavailable')
+                engine.neural_mode='off'
+                model['weights']['output_bias']=-8.
+                self.assertEqual(engine.prepare(row,100,6.5,1200)['status'],'onchain_risk_unavailable')
+            finally:store.close()

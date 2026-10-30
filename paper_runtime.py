@@ -17,7 +17,8 @@ def encode_state(trader):
     return {'schema': SCHEMA, 'rules': asdict(trader.rules), 'cash': trader.cash,
             'native_sol': trader.native_sol, 'sol_price_usd': trader.sol_price_usd,
             'strategy_capital_usd':trader.strategy_capital_usd,'strategy_peak_pnl_usd':trader.strategy_peak_pnl_usd,
-            'strategy_realized_pnl_usd':trader.strategy_realized_pnl_usd,'strategy_risk':trader.strategy_risk,'peak': trader.peak, 'position': trader.position, 'halted': trader.halted,
+            'strategy_realized_pnl_usd':trader.strategy_realized_pnl_usd,'strategy_risk':trader.strategy_risk,'peak': trader.peak, 'position': trader.position,
+            'positions':trader.all_positions(),'max_positions':trader.max_positions, 'halted': trader.halted,
             'last_timestamp': trader.last_timestamp,'consecutive_losses':trader.consecutive_losses,
             'loss_cooldown_until':trader.loss_cooldown_until,
             'paper_loss_cooldown_seconds':getattr(trader,'paper_loss_cooldown_seconds',trader.rules.loss_streak_cooldown_seconds),
@@ -36,6 +37,9 @@ def decode_state(state):
         setattr(trader, field, state[field])
     for field in ('strategy_capital_usd','strategy_peak_pnl_usd','strategy_realized_pnl_usd'):
         if field in state: setattr(trader,field,state[field])
+    trader.positions=state.get('positions') or ([trader.position] if trader.position else [])
+    trader.position=trader.positions[0] if trader.positions else None
+    trader.max_positions=state.get('max_positions',1)
     trader.strategy_risk=state.get('strategy_risk',{})
     trader.consecutive_losses=state.get('consecutive_losses',0)
     trader.loss_cooldown_until=state.get('loss_cooldown_until',0)
@@ -135,6 +139,22 @@ class PaperSession:
         candidate = decode_state(json.loads(json.dumps(encode_state(self.trader))))
         try:
             event = candidate.on_snapshot(snapshot)
+            if event.get('action')=='paper_buy':
+                from meme_learning import decision_context
+                from neural_autonomy import learning_decision
+                model=getattr(self,'learning_model',None)
+                context=decision_context(snapshot,candidate.rules,signal={'metrics':event.get('signal_metrics',{})},weighted_model=model)
+                decision=learning_decision(model,context) if getattr(self,'neural_mode','shadow')=='learning' else {'allow':True,'status':'shadow'}
+                if not decision['allow']:
+                    # Keep an unbiased exploration stream without inventing fills.
+                    explore=int(hashlib.sha256((snapshot['mint']+str(snapshot['observed_at'])).encode()).hexdigest()[:8],16)%4==0
+                    if not explore:
+                        candidate=self.trader
+                        event={'action':'reject','reason':'paper neural entry veto','neural_selection':decision}
+                    else: decision=dict(decision,allow=True,status='paper_exploration')
+                if event.get('action')=='paper_buy':
+                    context['adaptive_selection']=decision
+                    event['entry_context']=context
             if candidate.rules.evidence_mode=='market_only':
                 from meme_dip import entry_screen
                 event['evidence_mode']='market_only'
@@ -169,6 +189,19 @@ class PaperSession:
         self.trader=candidate
         return event
 
+    def configure_positions(self,count):
+        if type(count) is not int or not 1<=count<=8:
+            raise ValueError('Paper position limit must be 1 through 8')
+        if count<len(self.trader.all_positions()):
+            raise ValueError('Cannot reduce paper slots below open positions')
+        if count==self.trader.max_positions: return
+        self.trader.max_positions=count
+        with self.db:
+            self.db.execute('UPDATE paper_runs SET checkpoint=? WHERE id=?',
+                (json.dumps(encode_state(self.trader)),self.run_id))
+            self.db.execute('INSERT INTO paper_events(run_id,fingerprint,observed,event,snapshot) VALUES(?,?,?,?,?)',
+                (self.run_id,str(uuid.uuid4()),time.time(),json.dumps({'action':'paper_slots_configured','max_positions':count,'pnl_usd':0,'data_kind':'paper_accounting'}),'{}'))
+
     def configure_loss_cooldown(self,seconds):
         if type(seconds) is not int or not 0<=seconds<=86400:
             raise ValueError('Paper cooldown must be 0 through 86400 seconds')
@@ -202,6 +235,7 @@ class PaperSession:
         if not target.exists() or target.read_text()!=raw:
             temporary=self.directory/'learning.tmp'
             temporary.write_text(raw);temporary.replace(target)
+        self.learning_model=model
         self.learning_summary={'version':model['version'],'samples':model['samples'],
             'wins':model['wins'],'losses':model['losses'],'source_samples':model['source_samples']}
         return self.learning_summary
@@ -253,7 +287,7 @@ class PaperSession:
                 'liquid_cash_equity_usd':self.trader.cash+native,
                 'locked_rent_sol':sum(self.trader.account_rent.values()),
                 'valuation_as_of': self.trader.last_timestamp, 'realized_pnl_usd': realized,
-                'position': position, 'drawdown_halted': self.trader.halted,
+                'position': position,'positions':self.trader.all_positions(),'max_positions':self.trader.max_positions, 'drawdown_halted': self.trader.halted,
                 'consecutive_losses':self.trader.consecutive_losses,
                 'loss_cooldown_until':self.trader.loss_cooldown_until,
                 'paper_loss_cooldown_seconds':getattr(self.trader,'paper_loss_cooldown_seconds',self.trader.rules.loss_streak_cooldown_seconds),
@@ -261,7 +295,7 @@ class PaperSession:
                 'data_kinds': sorted(data_kinds),
                 'safety_evidence_mode':self.trader.rules.evidence_mode,'drawdown_scope':'bot_positions' if self.trader.rules.entry_style=='volume_candles' else 'virtual_wallet',
                 'strategy_realized_pnl_usd':self.trader.strategy_realized_pnl_usd,'strategy_risk':self.trader.strategy_risk,
-                'live_qualified':False,'neural_training':getattr(self,'learning_summary',None),
+                'live_qualified':False,'neural_mode':getattr(self,'neural_mode','shadow'),'neural_training':getattr(self,'learning_summary',None),
                 'latest_execution_assumptions':assumptions,
                 'execution_model': 'native_fee_ledger' if self.trader.native_sol is not None else 'assumed_USD_costs',
                 'recent_events': [json.loads(row[0]) for row in self.db.execute(

@@ -342,9 +342,18 @@ class MemeLiveEngine:
             neural_context=decision_context(snapshot,entry_rules,assessment,signal,
                 entry_profile=profile_name,weighted_model=frozen)
             neural_decision=entry_decision(self.store.state.get('neural_autonomy'),neural_context)
-            if not neural_decision['allow']:
-                self.store.save('neural_entry_veto',neural_decision)
-                return {'status':'neural_entry_veto','neural_selection':neural_decision}
+            adaptive_decision=None
+            if getattr(self,'neural_mode','qualified')=='learning':
+                from neural_autonomy import learning_decision
+                adaptive_context=decision_context(snapshot,entry_rules,assessment,signal,
+                    entry_profile=profile_name,weighted_model=self.store.state.get('learning_model_live'))
+                adaptive_decision=learning_decision(self.store.state.get('learning_model_live'),adaptive_context)
+                allowed=adaptive_decision['allow']
+            else:
+                allowed=neural_decision['allow'] if getattr(self,'neural_mode','qualified')=='qualified' else True
+            if not allowed:
+                self.store.save('neural_entry_veto',adaptive_decision or neural_decision)
+                return {'status':'neural_entry_veto','neural_selection':adaptive_decision or neural_decision}
             bar=int(snapshot['candle_history']['candles'][-1]['timestamp'])
             used=self.store.db.execute('SELECT bar FROM bars WHERE mint=? AND pool=?',(snapshot['mint'],snapshot['pool'])).fetchone()
             if used and used[0]>=bar: return {'status':'already_entered_on_completed_candle'}
@@ -402,7 +411,9 @@ class MemeLiveEngine:
         context_record=decision_context(snapshot,self.rules,assessment if side=='buy' else None,
             signal if side=='buy' else None,risk_report,profile_name,
             self.store.state.get('learning_model_live') if side=='buy' else None)
-        if side=='buy': context_record['neural_selection']=neural_decision
+        if side=='buy':
+            context_record['neural_selection']=neural_decision
+            if adaptive_decision: context_record['adaptive_selection']=adaptive_decision
         intent=dict(id=str(uuid.uuid4()),side=side,mint=snapshot['mint'],pool=snapshot['pool'],kind=snapshot['market_kind'],
             take_profit_usd=profit_target,max_loss_usd=loss_limit,entry_context=context_record,onchain_risk=risk_report,entry_profile=profile_name,input_units=units,minimum=context['min_output'],sol_price_usd=sol_price,bar=bar,reason=reason,
             base_account=str(market['base_user']),quote_account=str(market['quote_user']),simulation=simulated,

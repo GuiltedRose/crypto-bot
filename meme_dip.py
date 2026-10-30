@@ -195,6 +195,8 @@ class PaperDipTrader:
         self.consecutive_losses=0
         self.loss_cooldown_until=0
         self.position = None
+        self.positions=[]
+        self.max_positions=1
         self.armed = {}
         self.last_seen = {}
         self.last_entry_bars = {}
@@ -202,12 +204,21 @@ class PaperDipTrader:
         self.halted = False
         self.last_timestamp = -1
 
+    def all_positions(self):
+        positions=list(getattr(self,'positions',[]))
+        if self.position and not any(p['mint']==self.position['mint'] for p in positions):
+            positions.append(self.position)
+        return positions
+
     def equity(self,token_value=0):
-        return self.cash+token_value+((self.native_sol or 0)+sum(self.account_rent.values()))*(self.sol_price_usd or 0)
+        others=sum(p['quantity']*p.get('last_price_usd',p['entry_price'])
+            for p in self.all_positions() if p is not self.position)
+        return self.cash+token_value+others+((self.native_sol or 0)+sum(self.account_rent.values()))*(self.sol_price_usd or 0)
 
     def mark_risk(self,equity,open_pnl=0.):
         if self.rules.entry_style=='volume_candles':
-            pnl=self.strategy_realized_pnl_usd+open_pnl
+            other_pnl=sum(p.get('marked_net_pnl_usd',0.) for p in self.all_positions() if p is not self.position)
+            pnl=self.strategy_realized_pnl_usd+open_pnl+other_pnl
             self.strategy_peak_pnl_usd=max(self.strategy_peak_pnl_usd,pnl)
             from drawdown_schedule import drawdown_state
             self.strategy_risk=drawdown_state(self.strategy_capital_usd,pnl,self.strategy_peak_pnl_usd,self.rules.drawdown_halt,
@@ -222,13 +233,35 @@ class PaperDipTrader:
     def reclaim_rent(self):
         if self.native_sol is None:
             return {'action':'paper_rent_reclaim','returned_sol':0,'pnl_usd':0}
-        active=None if self.position is None else (self.position['mint'],self.position.get('token_program','standard_spl_assumed'))
-        keys=[key for key,value in self.account_rent.items() if key!=active and value>0]
+        active={(p['mint'],p.get('token_program','standard_spl_assumed')) for p in self.all_positions()}
+        keys=[key for key,value in self.account_rent.items() if key not in active and value>0]
         returned=sum(self.account_rent.pop(key) for key in keys)
         self.native_sol+=returned
         return {'action':'paper_rent_reclaim','returned_sol':returned,'pnl_usd':0,'accounts_closed':len(keys)}
 
-    def on_snapshot(self, snapshot):
+    def on_snapshot(self,snapshot):
+        book=self.all_positions()
+        held=next((p for p in book if p['mint']==snapshot['mint']),None)
+        if held is None and len(book)>=self.max_positions:
+            return {'action':'hold','reason':'one paper position already open' if self.max_positions==1 else 'paper position limit reached'}
+        self.positions=[p for p in book if p is not held]
+        self.position=held
+        event=self._on_snapshot(snapshot)
+        if held is not None:
+            self.positions=[p for p in self.positions if p is not held]
+        if self.position is not None:
+            p=self.position
+            p['last_price_usd']=snapshot['price_usd'];p['last_quote_at']=snapshot['observed_at']
+            execution=snapshot.get('execution',{})
+            p['marked_net_pnl_usd']=(p['quantity']*snapshot['price_usd']*(1-self.rules.slippage_per_side)
+                *(1-p.get('entry_fee_per_side',self.rules.fee_per_side))-p['exit_fixed_cost']
+                -p['cash_spent']-p.get('entry_native_cost_usd',0)
+                -(execution.get('network_fee_sol',0) if self.native_sol is not None else 0)*(self.sol_price_usd or 0))
+            self.positions.append(p)
+        self.position=self.positions[0] if self.positions else None
+        return event
+
+    def _on_snapshot(self, snapshot):
         mint, pool = snapshot['mint'], snapshot['pool']
         if not isinstance(mint, str) or not mint or not isinstance(pool, str) or not pool:
             raise ValueError('Mint and pool identity required')
