@@ -171,6 +171,9 @@ def update_weighted_model(model,context,net_pnl_usd,trade_signature=None):
     if not _finite(net_pnl_usd): raise ValueError('Finite confirmed trade P&L required for learning')
     if not isinstance(context,dict) or not context:
         return dict(model or new_weighted_model()),{'updated':False,'reason':'recorded entry context required'}
+    from data_policy import contains_unreviewed_learning_data
+    if contains_unreviewed_learning_data(context):
+        return dict(model or new_weighted_model()),{'updated':False,'reason':'data rights unverified; sample retained without training'}
     model=dict(model or new_weighted_model())
     if model.get('version')!=VERSION or model.get('feature_names')!=list(MODEL_FEATURES):
         raise ValueError('Unsupported neural model version or feature schema; rebuild required')
@@ -232,6 +235,9 @@ def decision_context(snapshot,rules,scorecard=None,signal=None,risk=None,entry_p
         'loss_streak_limit','loss_streak_cooldown_seconds')}
     context['data_source_urls']=[value for value in
         (snapshot.get('market_source_url'),snapshot.get('trades_source_url'),history.get('source_url')) if isinstance(value,str)]
+    if 'data_rights' in snapshot:
+        context['data_rights']=snapshot['data_rights']
+        context['data_provenance']=snapshot.get('data_provenance')
     context['recorded_before_order']=True
     return context
 

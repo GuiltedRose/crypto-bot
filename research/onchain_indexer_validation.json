@@ -1,0 +1,38 @@
+{
+  "checked_at": "2026-10-30",
+  "mode": "read_only_fixture_diagnostics",
+  "fixtures": [
+    {
+      "signature": "2MBGdLckeitdKifh52NiD9uo9NfxmU7XBWhKaTjjje45HWz5ucTRZr78nSH6UuZ5c6LRU43W4ywHPvyAf1FrSRE2",
+      "slot": 463439519,
+      "version": 1,
+      "accepted_events": 0,
+      "issues": [
+        "TradeEvent: payload 397 bytes, pinned fields 389, trailing 8; program 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+        "Truncated Borsh field",
+        "Unreviewed event layout/version",
+        "trade instruction/event mismatch"
+      ]
+    },
+    {
+      "signature": "2LUCQz5dypucSRwPCUxavqxPzCNpoBS7tfYdcc9MFJnV2NMna3gpVNq5eMquVUvyPZyye4fdfa5Kt4teZxnC1zGE",
+      "slot": 463439529,
+      "version": 0,
+      "accepted_events": 0,
+      "issues": [
+        "SellEvent: payload 441 bytes, pinned fields 433, trailing 8; program pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+        "Unreviewed event layout/version",
+        "trade instruction/event mismatch"
+      ]
+    }
+  ],
+  "real_complete_hourly_windows_demonstrated": 0,
+  "production_ready": false,
+  "infrastructure_blockers": [
+    "Unreviewed event tails and legacy instruction compatibility",
+    "No reviewed program deployment ranges configured",
+    "No reviewed event-time USD conversion source",
+    "No complete real finalized block window collected",
+    "Storage and ML rights for operational RPC endpoints require review"
+  ]
+}

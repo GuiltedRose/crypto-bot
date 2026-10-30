@@ -1,0 +1,27 @@
+{
+  "obtained_at": "2026-10-30",
+  "source": "https://api.mainnet-beta.solana.com",
+  "commitment": "finalized",
+  "purpose": "decoder regression only; not a training dataset",
+  "ml_rights": "UNKNOWN",
+  "fixtures": [
+    {
+      "file": "curve.json",
+      "sha256": "fb7dccd2dd25d08baaaf32c17c8d438aec0c13a475f0b29e9512845852982c0d",
+      "signature": "2MBGdLckeitdKifh52NiD9uo9NfxmU7XBWhKaTjjje45HWz5ucTRZr78nSH6UuZ5c6LRU43W4ywHPvyAf1FrSRE2",
+      "slot": 463439519,
+      "transaction_index": 234,
+      "version": 1,
+      "expected": "quarantine: eight bytes beyond published event layout"
+    },
+    {
+      "file": "pumpswap.json",
+      "sha256": "862b28b060f3f97b790b05c3fd47c90b27e43c65f08462e505b13b5a261b6d7f",
+      "signature": "2LUCQz5dypucSRwPCUxavqxPzCNpoBS7tfYdcc9MFJnV2NMna3gpVNq5eMquVUvyPZyye4fdfa5Kt4teZxnC1zGE",
+      "slot": 463439529,
+      "transaction_index": 368,
+      "version": 0,
+      "expected": "quarantine: eight bytes beyond published event layout"
+    }
+  ]
+}

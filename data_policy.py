@@ -29,7 +29,10 @@ def require_learning_rights(value):
 
 
 def contains_unreviewed_learning_data(value):
-    if isinstance(value,dict):return any(contains_unreviewed_learning_data(item) for item in value.values())
+    if isinstance(value,dict):
+        rights=value.get('data_rights')
+        if isinstance(rights,dict) and rights.get('learning_allowed') is not True:return True
+        return any(contains_unreviewed_learning_data(item) for item in value.values())
     if isinstance(value,(list,tuple)):return any(contains_unreviewed_learning_data(item) for item in value)
     if not isinstance(value,str) or not value.startswith(('https://','http://')):return False
     return is_pump_url(value) or (urlparse(value).hostname or '').lower()=='api.geckoterminal.com'

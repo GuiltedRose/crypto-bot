@@ -126,8 +126,11 @@ class ModeledPumpSources(PumpMarketSources):
         self.sol_quote=None
         self.sol_quote_time=0
 
+    def market_observation(self,mint,now=None,pool=None):
+        return super().observation(mint,now,pool)
+
     def observation(self,mint,now=None,pool=None):
-        row=super().observation(mint,now,pool)
+        row=self.market_observation(mint,now,pool)
         current=time.time() if now is None else now
         if self.sol_quote is None or current-self.sol_quote_time>60:
             quote_payload=self.fetch(ROOT+'/sol-price')

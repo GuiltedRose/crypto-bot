@@ -139,6 +139,7 @@ def main():
     parser.add_argument('--rules', type=Path)
     parser.add_argument('--exploratory',action='store_true',help='Paper-only market/chart experiment; unknown safety stays unqualified')
     parser.add_argument('--assume-usd-costs', action='store_true', help='Explicit scenario mode without a native-SOL ledger')
+    parser.add_argument('--onchain-db', type=Path, help='Opt-in local finalized index; modeled paper only')
     parser.add_argument('--feed', type=Path, help='Append-only JSONL snapshots; supports recorded or external live collectors')
     parser.add_argument('--mint', action='append', default=[])
     parser.add_argument('--watch-wallet', action='append', default=[], help='Public trader address; candidate discovery only, at most 32')
@@ -218,7 +219,12 @@ def main():
             print(json.dumps(report, indent=2) if args.json else format_report(report))
             return
         session.publish({'status':'starting_sources'})
-        if session.trader.rules.evidence_mode=='market_only':
+        if args.onchain_db:
+            if session.trader.rules.evidence_mode!='market_only':
+                parser.error('--onchain-db requires existing market_only paper rules; strict safety proofs are not supplied')
+            from onchain_market import OnchainPaperSources
+            sources=OnchainPaperSources(args.onchain_db,args.evidence_dir)
+        elif session.trader.rules.evidence_mode=='market_only':
             from pump_market import ModeledPumpSources
             sources=ModeledPumpSources(args.evidence_dir,include_legacy_metrics=session.trader.rules.entry_style!='volume_candles')
         else:
