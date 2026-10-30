@@ -135,6 +135,34 @@ def pause(state,path,reason):
     return model
 
 
+REQUIRED_CONSECUTIVE_PROMOTIONS=10
+
+
+def promotion_failures(metrics):
+    tests=(
+        ('prediction_metrics_missing',metrics.get('accuracy') is not None),
+        ('nonpositive_neural_net',metrics.get('neural_net_usd',0)>0),
+        ('accuracy_worse_than_reference',metrics.get('accuracy') is not None and metrics.get('reference_accuracy') is not None and metrics['accuracy']>=metrics['reference_accuracy']),
+        ('brier_worse_than_reference',metrics.get('brier') is not None and metrics.get('reference_brier') is not None and metrics['brier']<=metrics['reference_brier']),
+        ('fewer_than_three_changed_exits',metrics.get('changed_positions',0)>=3),
+        ('no_positive_improvement_lower_bound',metrics.get('improvement_lower_usd') is not None and metrics['improvement_lower_usd']>0),
+        ('drawdown_worse_than_reference',metrics.get('neural_drawdown_usd',0)<=metrics.get('reference_drawdown_usd',0)))
+    return [name for name,passed in tests if not passed]
+
+
+def live_eligibility(state):
+    streak=0
+    for event in (state or {}).get('history',[]):
+        if event['status']=='promoted':streak+=1
+        elif event['status'] in ('rejected','rolled_back'):streak=0
+    eligible=bool(streak>=REQUIRED_CONSECUTIVE_PROMOTIONS and (state or {}).get('champion')
+                  and not (state or {}).get('recovery')
+                  and (state or {}).get('version')==new_weighted_model()['version'])
+    return {'live_eligible':eligible,'consecutive_promotions':streak,
+            'required_consecutive_promotions':REQUIRED_CONSECUTIVE_PROMOTIONS,
+            'reason':'Ten consecutive successful challenger promotions required' if not eligible else 'Promotion history requirement met; all trade controls still apply'}
+
+
 def update(paths,state_path):
     groups=load_groups(paths);closed=baselines(paths,groups)
     path=Path(state_path)
@@ -143,6 +171,9 @@ def update(paths,state_path):
     if state is None:state={'version':version,'history':[],'consumed_until':0}
     if recovered:
         state['history'].append({'status':'state_recovered','reason':recovered})
+    from data_policy import contains_unreviewed_learning_data
+    if contains_unreviewed_learning_data(list(closed.values())) or contains_unreviewed_learning_data(list(groups.values())):
+        return pause(state,path,'Data-source rights/storage review required; recorded provider data is not approved for model training/evaluation')
     if state.get('version')!=version:
         return pause(state,path,'Saved challenger feature version differs from current code; explicit migration required')
     state.setdefault('consumed_positions',[])
@@ -259,13 +290,12 @@ def update(paths,state_path):
         metrics['reference']=candidate['reference_id']
         state['evaluation']=metrics
         if len(keys)>=MIN_EVALUATION_POSITIONS:
-            accepted=(metrics['accuracy'] is not None and metrics['neural_net_usd']>0
-                and metrics['accuracy']>=metrics['reference_accuracy'] and metrics['brier']<=metrics['reference_brier']
-                and metrics['changed_positions']>=3 and metrics['improvement_lower_usd']>0
-                and metrics['neural_drawdown_usd']<=metrics['reference_drawdown_usd'])
+            failures=promotion_failures(metrics)
+            accepted=not failures
+            metrics['promotion_failures']=failures
             end=max(closed[k]['exit_at'] for k in keys)
             state['history'].append({'status':'promoted' if accepted else 'rejected','candidate_id':candidate['id'],'metrics':metrics,
-                'reason':'Passed frozen position-grouped comparison' if accepted else 'Completed comparison did not meet unchanged promotion requirements',
+                'reason':'Passed frozen position-grouped comparison' if accepted else 'Promotion blocked: '+', '.join(failures),
                 'snapshot':copy.deepcopy(candidate)})
             state['consumed_positions']=list(dict.fromkeys(state['consumed_positions']+candidate['validation_ids']))
             state['consumed_until']=max(state['consumed_until'],end)
@@ -298,6 +328,7 @@ def update(paths,state_path):
     current=state.get('evaluation',{})
     pending_positions=current.get('positions',0) if candidate and current.get('candidate_id')==candidate['id'] else 0
     model['evaluation']={'challenger_id':candidate['id'] if candidate else None,
+        'live_eligibility':live_eligibility(state),
         'challengers_completed':len(completed),
         'total_evaluated_positions':sum(row['metrics']['positions'] for row in completed)+pending_positions,
         'current_challenger_positions':pending_positions,

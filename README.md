@@ -103,6 +103,14 @@ recorded failed-order fees since the earliest included entry. This recent window
 can span different models and is separate from lifetime training and exit OOS
 metrics. Learning parameters and risk limits are unchanged.
 
+**Data-source audit:** Pump-host HTTP collectors are currently disabled: their
+web access was not verified as permitted, and the official Developer API terms
+prohibit AI training/evaluation. Existing histories are retained pending rights
+review; default online market collection cannot resume without a permitted
+replacement. Saved-wallet Solana RPC remains available with shared rate limits.
+Live entries additionally require ten consecutive successful challenger promotions.
+See [audit evidence and source inventory](research/learning_source_audit_2026-10-30.md).
+
 ## Getting started
 
 Use Python 3.10 or later. From the repository directory:

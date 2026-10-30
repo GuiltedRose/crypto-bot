@@ -78,7 +78,7 @@ class SharedWalletTests(unittest.TestCase):
         self.assertEqual(read_signals([WALLET], self.directory, 1150)['candidate_mints'], [])
         self.assertFalse((self.directory/'status.tmp').exists())
 
-    def test_callouts_reach_both_modes_without_becoming_wallet_buys(self):
+    def test_unapproved_cached_callouts_are_excluded_from_both_modes(self):
         from test_pump_callouts import payload
         from pump_callouts import parse_hot_callouts
         rows, _ = parse_hot_callouts(payload(), 1100, [WALLET])
@@ -86,13 +86,13 @@ class SharedWalletTests(unittest.TestCase):
         self.report['callouts'] = rows
         self.publish()
         report = read_signals([WALLET], self.directory, 1150)
-        self.assertEqual(report['candidate_mints'], [MINT])
+        self.assertEqual(report['candidate_mints'], [])
         self.assertEqual(report['signals'], [])
-        self.assertEqual(len(live_context(report, [])['callouts']), 1)
+        self.assertEqual(len(live_context(report, [])['callouts']), 0)
         assets = [{'mint': SOL, 'approved_for_live': True}, {'mint': MINT, 'approved_for_live': False}]
         prioritized = prioritize_assets(assets, report)
-        self.assertEqual(prioritized[0]['mint'], MINT)
-        self.assertFalse(prioritized[0]['approved_for_live'])
+        self.assertEqual(prioritized[0]['mint'], SOL)
+        self.assertTrue(prioritized[0]['approved_for_live'])
 
     def test_candidate_ranking_uses_popularity_instead_of_lexical_mint_order(self):
         from wallet_signals import rank_candidate_mints

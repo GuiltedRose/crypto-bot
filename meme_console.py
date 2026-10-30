@@ -12,6 +12,9 @@ def _format_status(record,rules=None):
     if status=='token_analysis': return analysis_summary(record)
     if status=='started':
         return f"{prefix} Started | position: {'open' if record.get('position_open') else 'none'} | pending order: {'yes' if record.get('pending_order') else 'none'}"
+    if status=='live_eligibility_blocked':
+        risk=record.get('risk',{})
+        return f"{prefix} LIVE ENTRIES BLOCKED | promotions {risk.get('consecutive_promotions',0)}/{risk.get('required_consecutive_promotions',10)} | {risk.get('reason','Verified promotion history required')}"
     if status=='drawdown_halted' and record.get('risk',{}).get('scope')=='bot_positions':
         risk=record['risk']
         return f"{prefix} BOT DRAWDOWN HALTED | drawdown ${risk.get('drawdown_usd',0):.2f} / ${risk.get('limit_usd',0):.2f} | manual holdings excluded"

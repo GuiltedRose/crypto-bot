@@ -6,6 +6,7 @@ inherits or promotes paper cash, positions, proof flags or simulated fills.
 import argparse
 import json
 import math
+import sqlite3
 import os
 from pathlib import Path
 import time
@@ -270,6 +271,12 @@ def main():
             risk_assessor=OnchainRisk(risk_rpc)
         engine=MemeLiveEngine(rpc,user,store,rules,orders,signer,risk_assessor=risk_assessor,fixed_profile=args.profile if args.profile!='adaptive' else None)
         engine.neural_mode=args.neural_mode
+        def promotion_status():
+            from evaluation_state import load
+            from exit_evaluation import live_eligibility
+            try:return live_eligibility(load(args.learning_paper_db.parent/'exit_evaluation.json')[0])
+            except (OSError,ValueError,sqlite3.Error):return {'live_eligible':False,'reason':'Promotion history unavailable; entries blocked'}
+        engine.eligibility_provider=promotion_status
         def publish(result):
             record={'timestamp':time.time(),'mode':'live' if args.execute else 'unsigned_simulation',**result}
             if result.get('status') in ('started','scan_complete','holding','confirmed_buy','confirmed_sell',

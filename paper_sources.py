@@ -14,6 +14,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse, urlencode
 from urllib.request import Request, build_opener
 from meme_evidence import number
+from data_policy import require_permitted_url,SourceAccessBlocked
+from provider_limits import BUDGET,ProviderBackoff
 from pump_narratives import ROOT, NoRedirect, parse_coin, valid_mint
 
 class UnsupportedMarket(ValueError):
@@ -37,13 +39,20 @@ class PublicSources:
         self.interval = interval
         self.last_request = 0
         self.cooldown_until = {}
+        self.cache={}
 
     def fetch(self, url):
         if self.override_fetch:
             return self.override_fetch(url)
+        require_permitted_url(url)
         parsed = urlparse(url)
         if parsed.scheme != 'https' or parsed.netloc not in ('api.geckoterminal.com', 'frontend-api-v3.pump.fun', 'swap-api.pump.fun', 'advanced-indexer.pump.fun'):
             raise ValueError('Unreviewed paper data host')
+        cached=self.cache.get(url)
+        ttl=30 if '/ohlcv/' in parsed.path else 5
+        if cached and time.monotonic()-cached[0]<ttl:return json.loads(cached[1])
+        try:BUDGET.reserve(url,self.interval)
+        except ProviderBackoff as error:raise SourceCooldown(error.seconds) from None
         remaining = self.cooldown_until.get(parsed.netloc, 0)-time.monotonic()
         if remaining > 0:
             raise SourceCooldown(remaining)
@@ -55,17 +64,19 @@ class PublicSources:
         try:
             with build_opener(NoRedirect).open(request, timeout=15) as response:
                 raw = response.read(2_000_001)
+                cache_control=getattr(response,'headers',{}).get('Cache-Control','')
         except HTTPError as error:
-            if error.code == 429:
-                try:
-                    wait = min(300, max(30, int(error.headers.get('Retry-After', '60'))))
-                except (ValueError, TypeError):
-                    wait = 60
-                self.cooldown_until[parsed.netloc] = time.monotonic()+wait
+            BUDGET.failure(url,error.code,error.headers)
             error.close()
+            raise
+        except URLError:
+            BUDGET.failure(url,503)
             raise
         if len(raw) > 2_000_000:
             raise ValueError('Excessive provider response')
+        BUDGET.success(url)
+        if not isinstance(cache_control,str) or 'no-store' not in cache_control.lower():
+            self.cache[url]=(time.monotonic(),raw)
         return json.loads(raw)
 
     def discover(self):
@@ -161,7 +172,11 @@ class PublicSources:
 
 def source_error(error):
     result = {'status': 'unavailable', 'error_type': type(error).__name__}
-    if isinstance(error, HTTPError):
+    if isinstance(error,SourceAccessBlocked):
+        result.update(category='source_policy_blocked',retryable=False,reason=str(error))
+    elif isinstance(error,ProviderBackoff):
+        result.update(category='provider_backoff',retryable=True,retry_after_seconds=error.seconds if error.seconds!=float('inf') else None)
+    elif isinstance(error, HTTPError):
         result['http_status'] = error.code
         result['category'] = 'rate_limited' if error.code == 429 else 'not_found_or_not_indexed' if error.code == 404 else 'http_error'
         result['retryable'] = error.code in (429, 500, 502, 503, 504)

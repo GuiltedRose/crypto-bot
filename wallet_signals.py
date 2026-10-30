@@ -48,7 +48,7 @@ def read_signals(wallets, directory=DEFAULT_DIRECTORY, now=None):
             return unavailable('stale_wallet_source')
         from pump_leaderboard import effective_wallets,eligible_leaderboard_wallets
         pinned=list(wallets)
-        leaders=eligible_leaderboard_wallets(report.get('leaderboard_wallets',[]),now)
+        leaders=[]  # Undocumented Pump leaderboard source disabled.
         wallets=effective_wallets(pinned,leaders,now)
         checks = report['wallet_checks']
         signals = []
@@ -74,9 +74,9 @@ def read_signals(wallets, directory=DEFAULT_DIRECTORY, now=None):
                 signals.append({'mint': mint, 'watched_buyers': len(observations),
                                 'observations': list(observations.values()), 'independent_human_verified': False})
         from pump_callouts import eligible_callouts
-        callouts=eligible_callouts(report.get('callouts',[]),now,wallets)
+        callouts=[]  # Cached Pump web content is not an authorized replacement.
         from pump_hot_tokens import eligible_hot_tokens
-        hot=eligible_hot_tokens(report.get('hot_tokens',[]),now)
+        hot=[]
         candidates={g['mint'] for g in signals}|{row['mint'] for row in callouts}|{row['mint'] for row in hot}
         return dict(report, signals=signals, callouts=callouts, hot_tokens=hot, leaderboard_wallets=leaders, effective_wallet_count=len(wallets),candidate_mints=sorted(candidates),
                     automatic_trade_approval=False, independent_human_verified=False)
@@ -187,6 +187,7 @@ def collect_once(watcher, wallets, directory, now=None, callout_source=None, hot
         except Exception as error:
             report['hot_tokens']=[]
             report['hot_token_source']=source_error(error)
+    report['disabled_sources']={'pump_web':'Undocumented web access unapproved; Developer API disallows AI training/evaluation'} if not any((callout_source,hot_source,leaderboard_source)) else {}
     report['leaderboard_wallets']=leaders
     report['leaderboard_source']=leaderboard_report
     report['effective_wallet_count']=len(effective)
@@ -230,12 +231,7 @@ def main():
         migrate_legacy_cache(args.state_dir)
         from wallet_watch import WalletWatcher, PublicRpc
         watcher = WalletWatcher(args.state_dir/'wallet_watch.sqlite', PublicRpc(args.rpc))
-        from pump_callouts import HotCallouts
-        social=HotCallouts(args.state_dir/'callouts.sqlite')
-        from pump_hot_tokens import HotTokens
-        hot=HotTokens()
-        from pump_leaderboard import Leaderboard
-        leaderboard=Leaderboard()
+        social=hot=leaderboard=None  # Saved-wallet RPC remains; Pump-host collectors disabled.
         try:
             while True:
                 wallets = load_watchlist(args.watchlist)
@@ -246,7 +242,7 @@ def main():
                 time.sleep(60)
         finally:
             watcher.db.close()
-            social.db.close()
+            if social:social.db.close()
 
 
 if __name__ == '__main__':

@@ -240,10 +240,21 @@ class PublicRpc:
         if wait > 0:
             time.sleep(wait)
         self.last = time.monotonic()
+        from provider_limits import BUDGET
+        BUDGET.reserve(self.url,self.interval)
         request = Request(self.url, data=json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': method, 'params': params}).encode(),
                           headers={'Content-Type': 'application/json', 'User-Agent': 'SolanaPaperWalletWatch/0.1'})
-        with build_opener(NoRedirect).open(request, timeout=15) as response:
-            raw = response.read(2_000_001)
+        from urllib.error import HTTPError,URLError
+        try:
+            with build_opener(NoRedirect).open(request, timeout=15) as response:
+                raw = response.read(2_000_001)
+        except HTTPError as error:
+            BUDGET.failure(self.url,error.code,error.headers)
+            raise
+        except URLError:
+            BUDGET.failure(self.url,503)
+            raise
+        BUDGET.success(self.url)
         if len(raw) > 2_000_000:
             raise ValueError('Excessive RPC response')
         payload = json.loads(raw)

@@ -52,6 +52,8 @@ def samples_for(groups):
 
 
 def train_groups(groups):
+    from data_policy import require_learning_rights
+    require_learning_rights(list(groups.values()))
     samples=samples_for(groups)
     model=new_weighted_model()
     model['weights']=fit_balanced(model['weights'],samples)

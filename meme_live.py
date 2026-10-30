@@ -327,6 +327,10 @@ class MemeLiveEngine:
         if snapshot.get('execution',{}).get('model_only'): raise ValueError('Paper execution assumptions cannot authorize live orders')
         side='sell' if position else 'buy'
         if side=='buy':
+            if self.execute:
+                provider=getattr(self,'eligibility_provider',None)
+                eligibility=provider() if provider else {'live_eligible':False,'reason':'Verified promotion history required'}
+                if not eligibility.get('live_eligible'):return {'status':'live_eligibility_blocked','risk':eligibility}
             if s['halted']: return {'status':'drawdown_halted','risk':s.get('strategy_risk',{})}
             if s.get('strategy_risk',{}).get('promotion_valuation_pending'): return {'status':'bankroll_valuation_incomplete','reason':'Cannot confirm total-bankroll promotion/demotion; new entries paused','risk':s['strategy_risk']}
             cooldown=self.loss_streak_cooldown(now)

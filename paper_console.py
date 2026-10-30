@@ -67,6 +67,9 @@ def format_report(report,events=()):
             event=evaluation.get('last_event') or {}
             if event.get('reason') and event.get('status')!='validation_progressed':
                 lines.append(f"EXIT STATE | {event['status']}: {event['reason']}")
+            gate=evaluation.get('live_eligibility')
+            if gate:
+                lines.append(f"LIVE GATE | promotions {gate['consecutive_promotions']}/{gate['required_consecutive_promotions']} | {'eligible' if gate['live_eligible'] else 'blocked'}")
             monitoring=evaluation.get('monitoring',{})
             if monitoring:
                 lines.append(f"EXIT MONITOR | {monitoring['positions']} positions · net vs prior ${monitoring['net_improvement_usd']:+.2f}")

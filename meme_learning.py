@@ -230,6 +230,8 @@ def decision_context(snapshot,rules,scorecard=None,signal=None,risk=None,entry_p
         'position_fraction','take_profit_fraction','max_loss_fraction','max_position_usd',
         'take_profit_usd','max_loss_usd','slippage_per_side','drawdown_halt','min_buy_sell_ratio',
         'loss_streak_limit','loss_streak_cooldown_seconds')}
+    context['data_source_urls']=[value for value in
+        (snapshot.get('market_source_url'),snapshot.get('trades_source_url'),history.get('source_url')) if isinstance(value,str)]
     context['recorded_before_order']=True
     return context
 
@@ -283,6 +285,9 @@ def paper_outcomes(path):
                 if event['action']=='paper_buy':
                     if event['mint'] in opened: unmatched+=1
                     context=dict(event.get('entry_context') or snapshot)
+                    context['data_source_urls']=[value for value in
+                        (snapshot.get('market_source_url'),snapshot.get('trades_source_url'),
+                         (snapshot.get('candle_history') or {}).get('source_url')) if isinstance(value,str)]
                     context['flow_metrics']=_flow_metrics(snapshot)
                     signal_metrics=event.get('signal_metrics')
                     if not isinstance(signal_metrics,dict):
@@ -345,6 +350,8 @@ def train_shared_model(external=(),live=(),paper=()):
                 or row.get('entry_data_kind')=='synthetic'
                 or not isinstance(row.get('entry_context'),dict) or not row['entry_context']
                 or not _finite(row.get(pnl_key))): continue
+            from data_policy import require_learning_rights
+            require_learning_rights(row['entry_context'])
             identity=(source,row.get('run_id'),row.get('wallet'),row.get('exit_signature'))
             if not identity[-1] or identity in seen: continue
             seen.add(identity)

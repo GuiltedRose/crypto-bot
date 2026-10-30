@@ -38,6 +38,8 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 def fetch_json(url):
+    from data_policy import require_permitted_url
+    require_permitted_url(url)
     parsed = urlparse(url)
     if parsed.scheme != 'https' or parsed.netloc != 'frontend-api-v3.pump.fun':
         raise ValueError('Unreviewed source host')

@@ -54,7 +54,8 @@ class PublicSourceTests(unittest.TestCase):
     def test_rate_limit_enters_host_cooldown_without_hammering_provider(self):
         source = PublicSources(interval=0)
         error = HTTPError('https://api.geckoterminal.com', 429, 'rate limited', {'Retry-After': '120'}, None)
-        with patch('paper_sources.build_opener') as opener:
+        from provider_limits import ProviderBudget
+        with tempfile.TemporaryDirectory() as root,patch('paper_sources.BUDGET',ProviderBudget(Path(root)/'budget.sqlite',clock=lambda:1000)),patch('paper_sources.build_opener') as opener:
             opener.return_value.open.side_effect = error
             with self.assertRaises(HTTPError):
                 source.fetch('https://api.geckoterminal.com/test')

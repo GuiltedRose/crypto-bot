@@ -8,6 +8,7 @@ import json
 import sqlite3
 import time
 import urllib.request
+import urllib.error
 
 
 class RpcError(RuntimeError):
@@ -17,16 +18,28 @@ class RpcError(RuntimeError):
 
 
 class Rpc:
-    def __init__(self, endpoint):
+    def __init__(self, endpoint,interval=.5):
         if not endpoint.startswith('https://'):
             raise ValueError('RPC endpoint must use HTTPS')
         self.endpoint = endpoint
+        self.interval=max(.5,interval)
 
     def call(self, method, params):
+        from provider_limits import BUDGET
+        BUDGET.reserve(self.endpoint,self.interval)
         body = json.dumps(dict(jsonrpc='2.0', id=1, method=method, params=params)).encode()
         request = urllib.request.Request(self.endpoint, data=body, headers={'Content-Type': 'application/json', 'Accept':'application/json', 'User-Agent':'SolanaSpotBot/0.1'})
-        with urllib.request.urlopen(request, timeout=20) as response:
-            result = json.load(response)
+        from pump_narratives import NoRedirect
+        try:
+            with urllib.request.build_opener(NoRedirect).open(request, timeout=20) as response:
+                result = json.load(response)
+        except urllib.error.HTTPError as error:
+            BUDGET.failure(self.endpoint,error.code,error.headers)
+            raise
+        except urllib.error.URLError:
+            BUDGET.failure(self.endpoint,503)
+            raise
+        BUDGET.success(self.endpoint)
         if 'error' in result:
             raise RpcError(method,result['error'].get('code'))
         return result['result']

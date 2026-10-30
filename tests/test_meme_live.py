@@ -221,6 +221,14 @@ class EngineTests(unittest.TestCase):
         self.assertGreater(context['market_context']['network_cost_fraction'],0)
         self.assertEqual(result['intent']['entry_context']['market_context'],context['market_context'])
 
+    def test_promotion_history_gate_blocks_real_entries_but_not_position_management(self):
+        self.engine.signer=object()
+        self.engine.eligibility_provider=lambda:{'live_eligible':False,'consecutive_promotions':0}
+        self.assertEqual(self.engine.prepare(self.row,100,6.5,1200)['status'],'live_eligibility_blocked')
+        self.store.state['position']={'mint':'Mint','pool':'Pool','kind':'bonding_curve',
+            'units':1000,'cost_usd':1.78,'opened_at':1200}
+        self.assertEqual(self.engine.prepare(self.row,100,6.5,1200)['status'],'holding')
+
     def test_modeled_paper_execution_flags_cannot_enter_live(self):
         self.row['execution']={'model_only':True}
         with self.assertRaisesRegex(ValueError,'Paper'): self.engine.prepare(self.row,100,6.5,1200)
