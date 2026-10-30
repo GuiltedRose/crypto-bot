@@ -1,0 +1,32 @@
+{
+  "receiver_program": "rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ",
+  "push_program": "pythWSnswVUd12oZpeFP8e9CVaEqJg25g1Vtc2biRsT",
+  "sol_usd_feed_id": "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d",
+  "account": "PriceUpdateV2",
+  "full_verification_tag": 1,
+  "allocated_length": 134,
+  "sources": [
+    {
+      "repo": "pyth-network/pyth-crosschain",
+      "commit": "c875af6c87b08b507664c76d839e82d6167c9356",
+      "path": "target_chains/solana/pyth_solana_receiver_sdk/src/price_update.rs",
+      "url": "https://raw.githubusercontent.com/pyth-network/pyth-crosschain/c875af6c87b08b507664c76d839e82d6167c9356/target_chains/solana/pyth_solana_receiver_sdk/src/price_update.rs",
+      "sha256": "12d0ce8bc3907ae2949043397eaf3d5bd25deed98450c6969d957be402c807ae"
+    },
+    {
+      "repo": "pyth-network/pyth-crosschain",
+      "commit": "c875af6c87b08b507664c76d839e82d6167c9356",
+      "path": "target_chains/solana/pyth_solana_receiver_sdk/src/lib.rs",
+      "url": "https://raw.githubusercontent.com/pyth-network/pyth-crosschain/c875af6c87b08b507664c76d839e82d6167c9356/target_chains/solana/pyth_solana_receiver_sdk/src/lib.rs",
+      "sha256": "738f6e4fa9f5807cf3b1baca3407a4caa110c913fcafa3e3952f88b3332f3ce2"
+    },
+    {
+      "repo": "pyth-network/pyth-crosschain",
+      "commit": "c875af6c87b08b507664c76d839e82d6167c9356",
+      "path": "pythnet/pythnet_sdk/src/messages.rs",
+      "url": "https://raw.githubusercontent.com/pyth-network/pyth-crosschain/c875af6c87b08b507664c76d839e82d6167c9356/pythnet/pythnet_sdk/src/messages.rs",
+      "sha256": "859f315c9474e694dc5ddb04d1900c5bae8b115a347c4e59746123245cbabc2a"
+    }
+  ],
+  "rights": "UNKNOWN; implementation/source availability is not market-data retention or ML permission"
+}

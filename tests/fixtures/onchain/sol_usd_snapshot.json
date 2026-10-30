@@ -1,0 +1,25 @@
+{
+  "address": "7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE",
+  "shard": 0,
+  "source_id": "public-rpc-diagnostic-only",
+  "commitment": "finalized",
+  "response": {
+    "context": {
+      "apiVersion": "4.3.2",
+      "slot": 463463976
+    },
+    "value": {
+      "data": [
+        "IvEjY51+9M1gMUcENA3t3zcf1CRyFI8kjp0abRpesqw6zYt/1dayQwHvDYtv2izrpB2hXUCV0do5Kg0vjtDGx7wPTPrIwoC1ba6mZzsCAAAA/TAyAAAAAAD4////AiPlagAAAAABI+VqAAAAAJiyODkCAAAAVgFBAAAAAAAj5p8bAAAAAAA=",
+        "base64"
+      ],
+      "executable": false,
+      "lamports": 1825031,
+      "owner": "rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ",
+      "rentEpoch": 18446744073709551615,
+      "space": 134
+    }
+  },
+  "block_time": 1793401605,
+  "retrieved_at": 1793401608
+}

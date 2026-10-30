@@ -1,6 +1,6 @@
 # Local indexer and paper deployment
 
-Reviewed 2026-10-30. **Not production-ready:** real swap layouts, a reviewed USD
+Reviewed 2026-10-30. Latest hour/oracle evidence: [real-hour milestone](../research/onchain_hour_milestone.md). **Not production-ready:** real swap layouts, a reviewed USD
 source and sufficient full-chain throughput remain blockers. No live service is
 provided. Existing paper ledgers and frozen NN evaluations are not migrated or
 reset. The ten-promotion live eligibility requirement is unchanged.

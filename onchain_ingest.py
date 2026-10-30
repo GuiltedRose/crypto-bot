@@ -2,6 +2,7 @@
 import base64
 import json
 import time
+import zlib
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, build_opener
@@ -12,7 +13,24 @@ from wallet_watch import MAINNET, PublicRpcError
 from onchain_decode import Decoder
 
 READ_METHODS = {'getGenesisHash', 'getSlot', 'getBlocks', 'getBlock',
-                'getAccountInfo', 'getSignaturesForAddress', 'getTransaction'}
+                'getAccountInfo', 'getBlockTime', 'getSignaturesForAddress', 'getTransaction'}
+
+
+def decode_rpc_body(raw, encoding, max_bytes=64_000_000):
+    if len(raw) > max_bytes:
+        raise ValueError('RPC block response exceeds configured safety bound')
+    if encoding == 'identity':
+        return raw
+    if encoding != 'gzip':
+        raise ValueError('Unsupported RPC content encoding')
+    try:
+        inflater = zlib.decompressobj(16 + zlib.MAX_WBITS)
+        decoded = inflater.decompress(raw, max_bytes + 1)
+    except zlib.error:
+        raise ValueError('Invalid compressed RPC response') from None
+    if len(decoded) > max_bytes or inflater.unconsumed_tail or inflater.unused_data or not inflater.eof:
+        raise ValueError('Oversized, trailing or incomplete compressed RPC response')
+    return decoded
 
 
 class IndexRpc:
@@ -32,10 +50,11 @@ class IndexRpc:
         self.budget.reserve(self.url, self.interval)
         request = Request(self.url, data=json.dumps({'jsonrpc': '2.0', 'id': 1,
                           'method': method, 'params': params}).encode(),
-                          headers={'Content-Type': 'application/json', 'User-Agent': 'SolanaOnchainIndex/1'})
+                          headers={'Content-Type': 'application/json', 'Accept-Encoding': 'gzip', 'User-Agent': 'SolanaOnchainIndex/1'})
         try:
             with build_opener(NoRedirect).open(request, timeout=30) as response:
                 raw = response.read(64_000_001)
+                encoding = response.headers.get('Content-Encoding', 'identity').lower()
         except HTTPError as error:
             self.budget.failure(self.url, error.code, error.headers)
             # Do not expose endpoint paths, which may contain credentials.
@@ -45,9 +64,7 @@ class IndexRpc:
         except (URLError, TimeoutError, OSError):
             self.budget.failure(self.url, 503)
             raise ConnectionError('RPC transport unavailable') from None
-        if len(raw) > 64_000_000:
-            raise ValueError('RPC block response exceeds configured safety bound')
-        payload = json.loads(raw)
+        payload = json.loads(decode_rpc_body(raw, encoding))
         if 'error' in payload:
             code = payload['error'].get('code')
             if code in (401, 403):

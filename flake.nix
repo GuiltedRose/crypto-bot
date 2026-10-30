@@ -95,6 +95,7 @@
           chmod -R u+w source
           cd source
           python -m unittest discover -s tests -p test_onchain_indexer.py
+          python -m unittest discover -s tests -p test_onchain_hour.py
           touch $out
         ''; });
       nixosModules.default = { config, lib, pkgs, ... }:

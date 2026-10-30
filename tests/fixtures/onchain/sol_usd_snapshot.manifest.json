@@ -1,0 +1,11 @@
+{
+  "sha256": "8139048f3d7804ee06144737e9d8c67b9ab1795e2cb9e45e179f5968547584b8",
+  "source": "https://api.mainnet-beta.solana.com",
+  "obtained_at": "2026-10-30",
+  "purpose": "read-only oracle decoder regression only; no historical backfill or ML import",
+  "rights": "UNKNOWN",
+  "expected_usd": "95.86583214",
+  "publish_time": 1793401602,
+  "context_slot": 463463976,
+  "posted_slot": 463463971
+}

@@ -12,9 +12,10 @@ def canonical(value):
 
 
 class EventStore:
-    def __init__(self, path, readonly=False):
+    def __init__(self, path, readonly=False, retain_blocks=False):
         self.path = Path(path)
         self.readonly = readonly
+        self.retain_blocks = retain_blocks
         if readonly:
             if not self.path.is_file():
                 raise ValueError("Local index database does not exist; start the indexer first")
@@ -29,6 +30,7 @@ class EventStore:
                     time INTEGER NOT NULL, source TEXT NOT NULL, issues TEXT NOT NULL,
                     raw_hash TEXT NOT NULL, transactions INTEGER NOT NULL);
                 CREATE INDEX IF NOT EXISTS block_times ON blocks(time);
+                CREATE TABLE IF NOT EXISTS raw_blocks(slot INTEGER PRIMARY KEY, raw BLOB NOT NULL, raw_hash TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS transactions(
                     signature TEXT PRIMARY KEY, slot INTEGER NOT NULL, tx_index INTEGER NOT NULL,
                     raw BLOB NOT NULL, raw_hash TEXT NOT NULL);
@@ -121,6 +123,9 @@ class EventStore:
                 row = db.execute('SELECT raw_hash FROM blocks WHERE slot=?', (slot,)).fetchone()
                 if row and row[0] != digest:
                     raise ValueError('Conflicting finalized block')
+                if self.retain_blocks:
+                    db.execute('INSERT OR IGNORE INTO raw_blocks VALUES(?,?,?)',
+                               (slot, zlib.compress(canonical(block).encode()), digest))
                 db.execute('INSERT OR IGNORE INTO blocks VALUES(?,?,?,?,?,?,?,?)',
                            (slot, block['blockhash'], block['parentSlot'], stamp, source,
                             canonical(issues), digest, len(block['transactions'])))
@@ -201,13 +206,15 @@ class EventStore:
             db.execute('INSERT OR IGNORE INTO conversions VALUES(?,?,?,?,?)',
                        (mint, timestamp, str(price), source, canonical(proof)))
 
-    def conversion(self, mint, timestamp, max_age=60):
+    def conversion(self, mint, timestamp, max_age=60, max_slot=None):
         from decimal import Decimal
         with self.connect() as db:
             rows = db.execute('SELECT * FROM conversions WHERE mint=? AND time<=? AND time>=? ORDER BY time DESC',
                               (mint, timestamp, timestamp-max_age)).fetchall()
+        if max_slot is not None:
+            rows = [row for row in rows if json.loads(row['proof']).get('posted_slot', 0) <= max_slot]
         if not rows:
-            raise ValueError('Fresh historical USD conversion unavailable')
+            raise ValueError('Fresh causal historical USD conversion unavailable')
         newest = [row for row in rows if row['time'] == rows[0]['time']]
         if len({Decimal(row['usd']) for row in newest}) != 1:
             raise ValueError('Conflicting USD conversion sources')

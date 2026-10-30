@@ -13,7 +13,7 @@ class OnchainMarket:
         self.store = store
 
     def valued(self, event):
-        conversion, source, stamp = self.store.conversion(event['quote_mint'], event['block_time'])
+        conversion, source, stamp = self.store.conversion(event['quote_mint'], event['block_time'], max_slot=event['slot'])
         base = Decimal(event['base_units']) / 10 ** event['base_decimals']
         quote = Decimal(event['quote_units']) / 10 ** event['quote_decimals']
         return quote / base * conversion, quote * conversion, source, stamp
@@ -91,7 +91,7 @@ class OnchainMarket:
             real_quote = reserves.get('pool_quote_token_reserves')
         liquidity = Decimal(0)
         if real_quote is not None:
-            conversion, source, _ = self.store.conversion(latest['quote_mint'], latest['block_time'])
+            conversion, source, _ = self.store.conversion(latest['quote_mint'], latest['block_time'], max_slot=latest['slot'])
             # Quote-side reserves only: conservative, not a mark-to-market TVL.
             liquidity = Decimal(real_quote) / 10 ** latest['quote_decimals'] * conversion
         stamp = latest['block_time']

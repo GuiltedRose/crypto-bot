@@ -16,11 +16,13 @@ def main():
     parser.add_argument('--max-catchup-slots', type=int, default=64)
     parser.add_argument('--loop', action='store_true')
     parser.add_argument('--interval', type=float, default=5)
+    parser.add_argument('--capture-sol-usd', action='store_true', help='Explicit reviewed Pyth account capture into the selected isolated index; no historical backfill')
+    parser.add_argument('--retain-blocks', action='store_true', help='Keep compressed full blocks for independent offline replay; substantial disk cost')
     parser.add_argument('--status', action='store_true')
     parser.add_argument('--mint')
     parser.add_argument('--pool')
     args = parser.parse_args()
-    store = EventStore(args.db)
+    store = EventStore(args.db, retain_blocks=args.retain_blocks)
     if args.status or args.mint:
         watermark = store.watermark()
         coverage = store.coverage(watermark-3600, watermark) if watermark is not None else {
@@ -41,6 +43,12 @@ def main():
             continue
         store.register_source(endpoint['source_id'], endpoint['policy'])
         endpoints.append(IndexRpc(endpoint))
+    if args.capture_sol_usd:
+        if not endpoints:
+            parser.error('A reviewed enabled RPC endpoint is required')
+        from onchain_oracle import capture_sol, import_sol
+        print(json.dumps(import_sol(store, capture_sol(endpoints[0]))))
+        return
     ingester = Ingester(store, endpoints, config.get('reviewed_program_versions'))
     start = args.start_slot if store.next_slot() is None else None
     if args.loop:

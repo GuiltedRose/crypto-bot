@@ -1,0 +1,155 @@
+{
+  "checked_at": "2026-10-30",
+  "read_only": true,
+  "calls": [],
+  "official_specs": [
+    {
+      "repo": "pump-fun/pump-public-docs",
+      "commit": "639b87fb45c3adeffa6f7c4a1bf0cb85e392bf22",
+      "path": "idl/pump.json",
+      "url": "https://raw.githubusercontent.com/pump-fun/pump-public-docs/639b87fb45c3adeffa6f7c4a1bf0cb85e392bf22/idl/pump.json",
+      "sha256": "7616681ea557975f9f623ac211080f22a93060781eaf4765b0a488d980997207",
+      "event_types_changed": []
+    },
+    {
+      "repo": "pump-fun/pump-public-docs",
+      "commit": "639b87fb45c3adeffa6f7c4a1bf0cb85e392bf22",
+      "path": "idl/pump_amm.json",
+      "url": "https://raw.githubusercontent.com/pump-fun/pump-public-docs/639b87fb45c3adeffa6f7c4a1bf0cb85e392bf22/idl/pump_amm.json",
+      "sha256": "b7d8c57a4d9c4dd0109a9ab893052352333252d4eedced10ac091d4d66cab89b",
+      "event_types_changed": []
+    },
+    {
+      "repo": "pyth-network/pyth-crosschain",
+      "commit": "c875af6c87b08b507664c76d839e82d6167c9356",
+      "path": "target_chains/solana/pyth_solana_receiver_sdk/src/price_update.rs",
+      "url": "https://raw.githubusercontent.com/pyth-network/pyth-crosschain/c875af6c87b08b507664c76d839e82d6167c9356/target_chains/solana/pyth_solana_receiver_sdk/src/price_update.rs",
+      "sha256": "12d0ce8bc3907ae2949043397eaf3d5bd25deed98450c6969d957be402c807ae"
+    },
+    {
+      "repo": "pyth-network/pyth-crosschain",
+      "commit": "c875af6c87b08b507664c76d839e82d6167c9356",
+      "path": "target_chains/solana/pyth_solana_receiver_sdk/src/lib.rs",
+      "url": "https://raw.githubusercontent.com/pyth-network/pyth-crosschain/c875af6c87b08b507664c76d839e82d6167c9356/target_chains/solana/pyth_solana_receiver_sdk/src/lib.rs",
+      "sha256": "738f6e4fa9f5807cf3b1baca3407a4caa110c913fcafa3e3952f88b3332f3ce2"
+    },
+    {
+      "repo": "pyth-network/pyth-crosschain",
+      "commit": "c875af6c87b08b507664c76d839e82d6167c9356",
+      "path": "pythnet/pythnet_sdk/src/messages.rs",
+      "url": "https://raw.githubusercontent.com/pyth-network/pyth-crosschain/c875af6c87b08b507664c76d839e82d6167c9356/pythnet/pythnet_sdk/src/messages.rs",
+      "sha256": "859f315c9474e694dc5ddb04d1900c5bae8b115a347c4e59746123245cbabc2a"
+    }
+  ],
+  "signature_pages": [
+    {
+      "address": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+      "rows": 1000,
+      "bytes": 258059,
+      "seconds": 0.4166506379842758,
+      "oldest": 1793401349,
+      "newest": 1793401352,
+      "null_times": 0,
+      "failed": 798,
+      "full_hour_proven": false
+    },
+    {
+      "address": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+      "rows": 1000,
+      "bytes": 240109,
+      "seconds": 0.3920470440061763,
+      "oldest": 1793401352,
+      "newest": 1793401355,
+      "null_times": 0,
+      "failed": 439,
+      "full_hour_proven": false
+    },
+    {
+      "address": "71VzdApzwdJvTcRL9fGNyNCPDmTUs38FJLoKU7NQW1oL",
+      "rows": 1000,
+      "bytes": 223690,
+      "seconds": 0.42346041201381013,
+      "oldest": 1793397499,
+      "newest": 1793399861,
+      "null_times": 0,
+      "failed": 3,
+      "full_hour_proven": false
+    }
+  ],
+  "oracle_probe": {
+    "mint": "So11111111111111111111111111111111111111112",
+    "publish_time": 1793401602,
+    "posted_slot": 463463971,
+    "usd": "95.86583214",
+    "confidence_bps": "3.431192247094179346472629492",
+    "snapshot_context_slot": 463463976,
+    "account": "7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE",
+    "block_time": 1793401605,
+    "owner": "rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ",
+    "imported": false,
+    "rights": "UNKNOWN"
+  },
+  "indexing_comparison": {
+    "blocks": 2,
+    "transactions": 549,
+    "program_referencing_transactions": 239,
+    "successful_candidates": 119,
+    "full_block_requests_excluding_common_overhead": 2,
+    "selective_requests_lower_bound": 123,
+    "selective_ordering_block_requests": 2,
+    "full_json_bytes": 3918026,
+    "full_zlib_bytes": 786841,
+    "selected_successful_transaction_bytes": 1436109,
+    "scope_note": "Standard address pagination + deduplicated transaction reads + block signature lists for ordering; pagination beyond one page/program adds requests. No global completeness is asserted."
+  },
+  "milestone_reached": false,
+  "complete_real_hours": 0,
+  "operational_state_modified": false,
+  "training_enabled": false,
+  "blocked_by": [
+    "Official Pump/PumpSwap event types remain unchanged and do not consume real payloads",
+    "Sustained program-wide signature/transaction demand exceeds the tested public RPC budget",
+    "Historical oracle snapshots are missing for the target hour; current account is not historical backfill",
+    "No independent authorized ledger source or operational retention/ML license verified"
+  ],
+  "frozen_block_event_counts": {
+    "InitUserVolumeAccumulatorEvent": 1,
+    "CloseUserVolumeAccumulatorEvent": 1,
+    "DistributeFeeToHoldersEvent": 6
+  },
+  "frozen_block_common_issues": {
+    "Unreviewed event layout/version": 68,
+    "trade instruction/event mismatch": 67,
+    "SellEvent: payload 441 bytes, pinned fields 433, trailing 8; program pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA": 32,
+    "Truncated Borsh field": 14,
+    "BuyEvent: payload 489 bytes, pinned fields 481, trailing 8; program pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA": 12
+  },
+  "focused_tests": {
+    "existing_indexer": 30,
+    "new_hour_oracle": 11,
+    "total": 41,
+    "passed": true,
+    "whole_suite_run": false
+  },
+  "gzip_probe": [
+    {
+      "slot": 463447225,
+      "encoding": "gzip",
+      "wire_body_bytes": 646333,
+      "json_bytes": 2116731,
+      "seconds": 0.4556305500154849,
+      "transactions": 286,
+      "error": null
+    },
+    {
+      "slot": 463447226,
+      "encoding": "gzip",
+      "wire_body_bytes": 497187,
+      "json_bytes": 1801377,
+      "seconds": 0.4992674429959152,
+      "transactions": 263,
+      "error": null
+    }
+  ],
+  "free_infrastructure_conclusion": "Current conservative paced pipeline cannot keep up; gzip helps measured bandwidth. No categorical proof that all free RPC configurations are infeasible, and no complete sustainable real-hour run was demonstrated."
+}

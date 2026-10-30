@@ -440,6 +440,7 @@ class IndexerTests(unittest.TestCase):
         rpc = IndexRpc({'url': 'https://example.invalid', 'source_id': 'fixture'}, budget)
         with patch('onchain_ingest.build_opener') as opener:
             response = opener.return_value.open.return_value.__enter__.return_value
+            response.headers = {}
             response.read.return_value = json.dumps({'error': {'code': 403}}).encode()
             with self.assertRaises(SourceAccessBlocked): rpc.call('getSlot', [])
             with self.assertRaises(SourceAccessBlocked): rpc.call('getSlot', [])
