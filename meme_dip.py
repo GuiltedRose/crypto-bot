@@ -21,6 +21,7 @@ class DipRules:
     trend_min_gain_fraction: float = .05
     trend_pullback_min_fraction: float = .02
     trend_pullback_max_fraction: float = .15
+    min_buy_sell_ratio: float = 1.1
     social_min_views: int = 100
     max_liquidity_allocation_fraction: float = .0005
     max_holding_seconds: int = 900
@@ -47,6 +48,8 @@ class DipRules:
     max_position_usd: float = 0
     intended_risk_fraction: float = .0025
     drawdown_halt: float = .05
+    loss_streak_limit: int = 2
+    loss_streak_cooldown_seconds: int = 3600
     drawdown_promotion_bankroll_usd: float = 0
     promoted_drawdown_halt: float = .30
     drawdown_bankroll_basis: str = 'bot'
@@ -77,6 +80,12 @@ class DipRules:
                 raise ValueError('Invalid fractional rule')
         if not 0 < self.min_rising_close_fraction <= 1 or not 0 < self.max_candle_range_fraction < 1 or not 0 <= self.max_wicky_bar_fraction <= 1:
             raise ValueError('Invalid candle-quality settings')
+        if self.min_buy_sell_ratio < 1:
+            raise ValueError('Minimum buy/sell ratio must require net buying')
+        if type(self.loss_streak_limit) is not int or self.loss_streak_limit < 1:
+            raise ValueError('Loss streak limit must be a positive integer')
+        if type(self.loss_streak_cooldown_seconds) is not int or self.loss_streak_cooldown_seconds < 0:
+            raise ValueError('Loss streak cooldown must be a nonnegative integer')
         if not 0<self.promoted_drawdown_halt<1 or self.drawdown_promotion_bankroll_usd>0 and self.promoted_drawdown_halt<self.drawdown_halt:
             raise ValueError('Invalid promoted drawdown schedule')
         if self.min_dip_fraction >= self.max_dip_fraction:
@@ -180,6 +189,8 @@ class PaperDipTrader:
         self.strategy_peak_pnl_usd=0.
         self.strategy_realized_pnl_usd=0.
         self.strategy_risk={}
+        self.consecutive_losses=0
+        self.loss_cooldown_until=0
         self.position = None
         self.armed = {}
         self.last_seen = {}
@@ -295,12 +306,18 @@ class PaperDipTrader:
                 self.position = None
                 self.armed.pop(key, None)
                 self.strategy_realized_pnl_usd+=pnl
+                self.consecutive_losses=self.consecutive_losses+1 if pnl<0 else 0
+                if self.consecutive_losses>=r.loss_streak_limit:
+                    self.loss_cooldown_until=now+r.loss_streak_cooldown_seconds
                 self.mark_risk(self.equity())
                 return {'action': 'paper_sell', 'mint': mint, 'pnl_usd': pnl, 'cash_usd': self.cash,'native_sol':self.native_sol,
                         'reason': 'drawdown halt' if self.halted else 'stop' if stop_hit else 'time limit' if time_exit and not target_hit else 'target'}
             return {'action': 'hold', 'reason': 'manage paper position'}
         if self.halted:
             return {'action': 'reject', 'reason': 'paper drawdown halt'}
+        if now<self.loss_cooldown_until:
+            return {'action':'reject','reason':'paper consecutive-loss cooldown',
+                    'consecutive_losses':self.consecutive_losses,'cooldown_until':self.loss_cooldown_until}
         profile_name=None
         if r.entry_profile_mode=='adaptive':
             from meme_profiles import assess_profiles,profiles

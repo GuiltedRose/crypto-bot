@@ -182,7 +182,7 @@ def startup_error(error):
     messages={
         'Another meme runner holds this state':'Another meme runner is active. Stop that process before restarting.',
         'Live state wallet/rules differ; use --adopt-rules only while flat with no unresolved orders':
-            'Rule adoption blocked: saved wallet differs, a position is open, or an order is unresolved. Reconcile pending orders using the saved rules before adoption. State was preserved.',
+            'Rule adoption blocked: saved wallet differs, a position is open, or an order is unresolved. Reconcile pending orders using the saved rules before using --adopt-rules while flat. State was preserved.',
         'Execution state mode mismatch':'This state directory belongs to another execution mode. Use separate unsigned and live state directories.',
         'Unbound unresolved orders require manual reconciliation':'An unresolved submitted order is missing its strategy binding. Reconcile it before trading; keep all state files.',
         '.env must be accessible only to its owner (chmod 600 .env)':'.env permissions are too broad. Run chmod 600 .env.',

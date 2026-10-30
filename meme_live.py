@@ -127,6 +127,29 @@ class MemeLiveEngine:
             total_bankroll=equity if self.rules.drawdown_bankroll_basis=='total_for_demotion' else None,
             total_complete=getattr(self,'bankroll_valuation',{}).get('complete',True))
 
+    def loss_streak_cooldown(self,now):
+        limit=self.rules.loss_streak_limit
+        rows=self.store.db.execute(
+            "SELECT at,body FROM events WHERE kind='confirmed_sell' ORDER BY id DESC LIMIT ?",
+            (limit,)).fetchall()
+        if len(rows)<limit:
+            return None
+        losses=0
+        for _,raw in rows:
+            pnl=json.loads(raw).get('pnl_usd')
+            if isinstance(pnl,bool) or not isinstance(pnl,(int,float)) or not math.isfinite(pnl):
+                raise ValueError('Confirmed sell has invalid P&L for loss-streak feedback')
+            if pnl>=0:
+                break
+            losses+=1
+        if losses<limit:
+            return None
+        cooldown_until=rows[0][0]+self.rules.loss_streak_cooldown_seconds
+        if now>=cooldown_until:
+            return None
+        return {'consecutive_losses':losses,'cooldown_until':cooldown_until,
+                'remaining_seconds':cooldown_until-now}
+
     def resolve_expired(self,p,signature):
         """Release only expired buys with unchanged finalized pre-send inventory.
 
@@ -242,6 +265,8 @@ class MemeLiveEngine:
         if side=='buy':
             if s['halted']: return {'status':'drawdown_halted','risk':s.get('strategy_risk',{})}
             if s.get('strategy_risk',{}).get('promotion_valuation_pending'): return {'status':'bankroll_valuation_incomplete','reason':'Cannot confirm total-bankroll promotion/demotion; new entries paused','risk':s['strategy_risk']}
+            cooldown=self.loss_streak_cooldown(now)
+            if cooldown: return {'status':'loss_streak_cooldown','risk':cooldown}
             entry_rules=self.rules
             profile_name=self.fixed_profile
             if self.rules.entry_profile_mode=='adaptive':
@@ -323,7 +348,8 @@ class MemeLiveEngine:
             round_trip=(2*simulated['fee_lamports']/1e9*sol_price+units/1e9*sol_price*2*(market['fee_bps']/10000+self.rules.slippage_per_side))
             if round_trip+setup>=loss_limit: return {'status':'estimated_costs_exceed_loss_budget'}
         from meme_learning import decision_context
-        context_record=decision_context(snapshot,self.rules,assessment if side=='buy' else None)
+        context_record=decision_context(snapshot,self.rules,assessment if side=='buy' else None,
+            signal if side=='buy' else None,risk_report,profile_name)
         intent=dict(id=str(uuid.uuid4()),side=side,mint=snapshot['mint'],pool=snapshot['pool'],kind=snapshot['market_kind'],
             take_profit_usd=profit_target,max_loss_usd=loss_limit,entry_context=context_record,onchain_risk=risk_report,entry_profile=profile_name,input_units=units,minimum=context['min_output'],sol_price_usd=sol_price,bar=bar,reason=reason,
             base_account=str(market['base_user']),quote_account=str(market['quote_user']),simulation=simulated,

@@ -204,6 +204,17 @@ class EngineTests(unittest.TestCase):
         self.store.state['position']={'mint':'Mint','pool':'Pool','kind':'bonding_curve','units':2000,'cost_usd':1.78,'opened_at':1200}
         self.assertIn('inventory_changed',self.engine.prepare(self.row,100,6.5,1200)['status'])
 
+    def test_two_recent_confirmed_losses_pause_entries_until_cooldown_or_a_win(self):
+        now=time.time()
+        for pnl in (-.3,-.2):
+            self.store.save('confirmed_sell',{'mint':'Mint','pnl_usd':pnl})
+        row=dict(self.row,observed_at=now)
+        result=self.engine.prepare(row,100,6.5,now)
+        self.assertEqual(result['status'],'loss_streak_cooldown')
+        self.assertEqual(result['risk']['consecutive_losses'],2)
+        self.store.save('confirmed_sell',{'mint':'Mint','pnl_usd':.1})
+        self.assertIsNone(self.engine.loss_streak_cooldown(now))
+
 class OrderJournal:
     def __init__(self):
         import sqlite3

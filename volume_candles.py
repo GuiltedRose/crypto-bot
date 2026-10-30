@@ -1,9 +1,10 @@
-"""Minimal market entry policy: reported buy volume + real completed candles.
+"""Volume/candle entry policy with an optional reclaim and directional-flow gate.
 
-Does not infer momentum, direction, social support, or absence of manipulation.
-Transaction identity, fees, exact output bounds and position limits live in the
-execution layer and remain mandatory.
+Reported aggregates are not proof of independent demand or absence of wash
+trading. Transaction identity, fees, exact output bounds and position limits
+live in the execution layer and remain mandatory.
 """
+import math
 from urllib.parse import urlparse
 from meme_evidence import number
 
@@ -49,6 +50,14 @@ def assess_reclaim(snapshot,bars,rules):
     """Short-window impulse/pullback/reclaim hypothesis, using closed bars only."""
     def watch(reason,**metrics):
         return {'action':'watch','reasons':[], 'reason':reason,'metrics':metrics}
+    buy=snapshot['buy_volume_usd']
+    sell=snapshot.get('sell_volume_usd')
+    if isinstance(sell,bool) or not isinstance(sell,(int,float)) or not 0<=sell<float('inf'):
+        return watch('hourly sell-volume evidence unavailable')
+    ratio=buy/sell if sell>0 and math.isfinite(buy/sell) else None
+    if buy<sell*rules.min_buy_sell_ratio:
+        return watch('hourly buy pressure below configured minimum',
+                     buy_volume_usd=buy,sell_volume_usd=sell,buy_sell_ratio=ratio)
     if len(bars)<3: return watch('need impulse, pullback and reclaim candles')
     # Search observed setups, keeping the impulse while later bars confirm it.
     reclaim=bars[-1]
@@ -77,4 +86,5 @@ def assess_reclaim(snapshot,bars,rules):
     return {'action':'buy','reasons':[],'reason':'upward impulse, pullback and volume-backed reclaim',
             'metrics':{'peak_price':peak,'pullback_low':dip['low'],'pullback_fraction':depth,
                        'runup_gain_fraction':gain,'completed_bars':len(bars),
+                       'buy_volume_usd':buy,'sell_volume_usd':sell,'buy_sell_ratio':ratio,
                        'human_buyers_verified':False}}

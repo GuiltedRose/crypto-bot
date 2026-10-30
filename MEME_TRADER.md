@@ -2,17 +2,24 @@
 
 Active entry correction: `momentum_reclaim_enabled: true` requires an upward
 impulse, a 2–50% pullback, and a completed bullish reclaim above the pullback
-candle high with renewed candle volume. Broken lows, missing intervals and
-chased quotes remain WATCH. The $5,000 minimum and position/exit controls stay.
+candle high with renewed candle volume. One-hour buy volume must be at least
+1.1 times reported sell volume; missing sell-volume evidence or weaker buying
+remains WATCH. Broken lows, missing intervals and chased quotes remain WATCH.
+The $5,000 minimum and position/exit controls stay. Two consecutive confirmed
+net losses pause new entries for one hour; managing an open position is not
+paused.
 Live entries also require the bounded on-chain concentration/activity check;
 this cannot certify human buyers or absence of manipulation. Paper models the
-same candle setup but does not certify these live on-chain checks. Earlier
-volume-only policy descriptions below are historical.
+same candle setup only when configured with the same rules; it does not certify
+these live on-chain checks. Earlier volume-only policy descriptions below are
+historical.
 
 Current percentage limits for new entries: `position_fraction: 0.274` (27.4% of bankroll),
 `take_profit_fraction: 0.562` (56.2% net profit on input), and
-`max_loss_fraction: 0.112` (11.2% net loss on input). At $6.50 these approximate
-$1.78 input, $1 profit and $0.20 loss. Reserves and execution checks still apply.
+`max_loss_fraction: 0.112` (an 11.2% net-loss trigger on input, not a guaranteed
+worst-case fill). At $6.50 these approximate $1.78 input, $1 profit and $0.20
+loss. A fast price move or poor liquidity can make the realized loss larger.
+Reserves and execution checks still apply.
 Each position freezes its dollar exits at entry; existing positions keep their
 original exits. Legacy dollar settings are fallbacks only when a fraction is zero.
 Restart with `--adopt-rules` when flat to adopt changed live rules. Older dollar
@@ -20,25 +27,30 @@ examples below describe the previous configuration.
 
 ## Current meme execution runner
 
-### Current minimal entry policy (supersedes profile/dip notes below)
+### Current momentum/reclaim entry policy (supersedes entry-policy notes below)
 
 The current `meme_live_rules.json` uses `entry_style: volume_candles` and
-`entry_profile_mode: adaptive` with:
+`momentum_reclaim_enabled: true`, with `entry_profile_mode: adaptive`:
 
-- At least **$5,000 provider-reported buy volume over one hour**.
-- **Three real, completed one-minute candles**, configurable to two if explicitly
-  requested in `trend_min_bars`. Partial, duplicate, wrong-mint, malformed and
-  stale data remain invalid. Sparse real candles are accepted without inventing
-  missing intervals; no upward trend is inferred from the candle count.
-- **$1.78 maximum input**, unchanged **$1 net TP** and **$0.20 net SL trigger**.
+- At least **$5,000 provider-reported buy volume over one hour**, with at least
+  95% window coverage, and **three real, completed one-minute candles**.
+- Provider-reported one-hour buy volume is at least **1.1x sell volume**.
+  Missing sell-volume data or weaker buy pressure remains WATCH.
+- An intact upward impulse, a bearish pullback of **2–50%**, then a completed
+  bullish reclaim above the pullback candle high with volume at least as large
+  as the pullback candle. A broken low, missing interval, stale data or chased
+  quote remains WATCH; candles are not synthesized to fill gaps.
+- Live entries also pass the bounded on-chain concentration/activity check.
+  This is not proof of human buyers, bundle safety or absence of manipulation.
+- **$1.78 maximum input**, **$1 net TP**, and **$0.20 net SL trigger** at the
+  $6.50 example bankroll. Position and exit percentages remain fixed by the
+  rules; a stop trigger cannot guarantee the realized loss in a fast or
+  illiquid market.
 
-Trend direction, pullback range, maximum candle range, wick ratios, social
-presence, provider liquidity thresholds, and the bounded holder/trade-cluster
-screen no longer gate entries under this policy. In particular, it no longer
-waits for a dip: it can enter a falling coin once volume/candle minimums pass.
-The previous pullback/veto-based profile selector and armed-dip proposal are not used here. Adaptive response profiles remain enabled as described below. Hot
-boards, leaderboards and wallet activity remain discovery/priority information.
-Other displayed scorecard/market metrics are diagnostic only.
+The adaptive selector classifies the qualifying setup using candle range and
+changes response cadence only; it does not loosen entry requirements or increase
+stakes. Hot boards, leaderboards and wallet activity remain discovery/priority
+information. Other displayed scorecard/market metrics are diagnostic only.
 
 Technical execution failsafes remain: mainnet/mint/pool/account identity,
 supported token programs/extensions and revoked authorities, exact-input and
@@ -47,18 +59,14 @@ on-chain quotes, unsigned buy/sell probes, sell simulation, one position,
 no duplicate-candle re-entry, uncertain-order recovery, native fee/$1 cash
 reserves, unchanged TP/SL, and the existing 15-minute holding limit. The actual
 adapter's reserve-impact limit may still reject a technically unexecutable size.
-No manipulation/bundle-safety claim is made for this minimal market policy.
+No manipulation/bundle-safety claim is made for this market policy.
 
-Adaptive mode classifies each qualifying coin by the largest high-to-low/open
+Adaptive mode classifies each qualifying setup by the largest high-to-low/open
 range among its latest required candles: Current <=30%, Moderate >30–45%,
-Aggressive >45% (there is **no upper volatility rejection** in this policy).
-All three share the same $5,000/three-candle market minimums, $1.78 maximum
-input, $1 TP, $0.20 SL and 0.5% slippage. Profiles now change response cadence,
-not admission requirements or stakes: holding rests are capped at 15/12/10
-seconds; fresh flat-wallet regime rests at 30/20/10 seconds. Source latency adds
-to these intervals. The selector is rules-based, not a trained profit model.
-A qualifying coin proceeds to transaction preparation rather than waiting for
-a dip; execution and bot-loss failsafes can still prevent a trade.
+Aggressive >45%. These labels change response cadence only: holding rests are
+capped at 15/12/10 seconds; fresh flat-wallet regime rests at 30/20/10 seconds.
+Source latency adds to these intervals. This is a rules-based response selector,
+not a trained profit model or evidence of profitability.
 
 The live **wallet-wide** drawdown trigger has been removed. The loss failsafe
 uses confirmed bot realized P&L plus estimated net liquidation P&L of its own
@@ -175,12 +183,15 @@ research report; losing or unfinished trades are never silently removed.
 
 The report is `state/research/bot_outcomes.json`, refreshed by the research
 worker even while public-history collection is unavailable. It gives empirical
-per-profile/source performance and decision-to-outcome records. The data is a
-learning foundation, not an already validated model: there is currently no
-automatic funded-policy rewrite or claim of predictive improvement from a few
-paper outcomes. Manual receipt deltas do not become profit labels before
-cost/rent reconstruction. The bot's own purchases never become independent
-fresh-market endorsements merely because they are in this research archive.
+per-profile/source performance, decision-to-outcome records, and outcomes by
+buy/sell flow, turnover/liquidity, candle range and sampled on-chain risk status.
+A negative cohort is only flagged for review after ten outcomes; paper and live
+samples remain separate. This is diagnostic feedback, not validated prediction
+or automatic rule optimization. The fixed one-hour pause after two consecutive
+confirmed losses is a risk guard, not a learned profitability claim. Manual
+receipt deltas do not become profit labels before cost/rent reconstruction.
+The bot's own purchases never become independent fresh-market endorsements
+merely because they are in this research archive.
 
 Missing receipts remain pending; ambiguous routed trades/transfers remain
 unclassified. Net SOL/token deltas may contain account rent or other movements,

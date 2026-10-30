@@ -6,11 +6,45 @@ open trades, or turn a few profitable outcomes into a validated model.
 import argparse
 from collections import defaultdict
 import json
+import math
 from pathlib import Path
 import sqlite3
 
 
-def decision_context(snapshot,rules,scorecard=None):
+def _finite(value):
+    return type(value) in (int,float) and math.isfinite(value)
+
+
+def _safe_ratio(numerator,denominator):
+    if not _finite(numerator) or not _finite(denominator) or denominator<=0:
+        return None
+    value=numerator/denominator
+    return value if _finite(value) else None
+
+
+def _flow_metrics(snapshot):
+    buy=snapshot.get('buy_volume_usd')
+    sell=snapshot.get('sell_volume_usd')
+    liquidity=snapshot.get('liquidity_usd')
+    history=snapshot.get('candle_history',{})
+    candles=history.get('candles',[]) if isinstance(history,dict) else []
+    ranges=[]
+    if isinstance(candles,list):
+        for candle in candles[-12:]:
+            if not isinstance(candle,dict): continue
+            opening,high,low=(candle.get(key) for key in ('open','high','low'))
+            if all(_finite(value) for value in (opening,high,low)) and opening>0 and high>=low:
+                value=(high-low)/opening
+                if _finite(value): ranges.append(value)
+    return {
+        'buy_sell_ratio':_safe_ratio(buy,sell),
+        'hourly_turnover_to_liquidity':_safe_ratio(buy+sell,liquidity)
+            if _finite(buy) and _finite(sell) else None,
+        'max_completed_candle_range_fraction':max(ranges) if ranges else None,
+    }
+
+
+def decision_context(snapshot,rules,scorecard=None,signal=None,risk=None,entry_profile=None):
     fields=('mint','pool','observed_at','price_usd','market_kind','buy_volume_usd','sell_volume_usd','liquidity_usd',
             'buy_volume_window_seconds','buy_volume_coverage_pct')
     context={key:snapshot.get(key) for key in fields}
@@ -18,7 +52,19 @@ def decision_context(snapshot,rules,scorecard=None):
     context['completed_candles']=[{key:row.get(key) for key in ('timestamp','open','high','low','close','volume_usd')}
         for row in history.get('candles',[])[-12:] if isinstance(row,dict)]
     context['scorecard']=scorecard
-    context['limits']={key:getattr(rules,key) for key in ('position_fraction','take_profit_fraction','max_loss_fraction','max_position_usd','take_profit_usd','max_loss_usd','slippage_per_side','drawdown_halt')}
+    context['flow_metrics']=_flow_metrics(snapshot)
+    context['entry_profile']=entry_profile
+    context['signal']={key:signal.get(key) for key in ('action','reason','metrics')} if isinstance(signal,dict) else None
+    if isinstance(risk,dict):
+        context['onchain_risk']={key:risk.get(key) for key in
+            ('passed','status','reasons','coverage','largest_sampled_owner_pct','top10_sampled_owners_pct',
+             'busiest_buyer_share','busiest_slot_buy_share')}
+    else:
+        context['onchain_risk']=None
+    context['limits']={key:getattr(rules,key) for key in (
+        'position_fraction','take_profit_fraction','max_loss_fraction','max_position_usd',
+        'take_profit_usd','max_loss_usd','slippage_per_side','drawdown_halt','min_buy_sell_ratio',
+        'loss_streak_limit','loss_streak_cooldown_seconds')}
     context['recorded_before_order']=True
     return context
 
@@ -72,6 +118,43 @@ def paper_outcomes(path):
     return result,unclosed,[],unmatched
 
 
+def _feedback_features(context):
+    stored=context.get('flow_metrics')
+    metrics=stored if isinstance(stored,dict) else _flow_metrics(context)
+    ratio=metrics.get('buy_sell_ratio')
+    turnover=metrics.get('hourly_turnover_to_liquidity')
+    candle_range=metrics.get('max_completed_candle_range_fraction')
+    risk=context.get('onchain_risk')
+    risk_status=risk.get('status') if isinstance(risk,dict) else None
+    return {
+        'buy_sell_ratio':('unknown' if not _finite(ratio) else
+            'below_1.0' if ratio<1 else '1.0_to_1.1' if ratio<1.1 else 'at_least_1.1'),
+        'hourly_turnover_to_liquidity':('unknown' if not _finite(turnover) else
+            'below_1x' if turnover<1 else '1x_to_10x' if turnover<10 else 'at_least_10x'),
+        'max_candle_range':('unknown' if not _finite(candle_range) else
+            'below_10pct' if candle_range<.1 else '10_to_25pct' if candle_range<.25 else 'at_least_25pct'),
+        'onchain_risk_status':risk_status or 'unknown',
+    }
+
+
+def outcome_feedback(closed,minimum_review_samples=10):
+    groups=defaultdict(list)
+    for trade in closed:
+        context=trade.get('entry_context')
+        if not isinstance(context,dict): continue
+        for feature,band in _feedback_features(context).items():
+            groups[(trade['source'],feature,band)].append(trade['net_pnl_usd'])
+    result=[]
+    for (source,feature,band),values in sorted(groups.items()):
+        mean=sum(values)/len(values)
+        result.append({'source':source,'feature':feature,'band':band,'trades':len(values),
+            'net_pnl_usd':sum(values),'mean_net_pnl_usd':mean,'wins':sum(value>0 for value in values),
+            'losses':sum(value<0 for value in values),
+            'review_status':'insufficient_sample' if len(values)<minimum_review_samples else
+                'review_negative_expectancy' if mean<0 else 'descriptive_only'})
+    return result
+
+
 def report(live=None,paper=None):
     closed=[];opened=[];failures=[];unmatched=0
     for source,path in [(live_outcomes,live),(paper_outcomes,paper)]:
@@ -89,6 +172,9 @@ def report(live=None,paper=None):
             'live_realized_pnl_including_failed_orders_usd':sum(t['net_pnl_usd'] for t in closed if t['source']=='bot_live')-sum(f.get('network_cost_usd',0) for f in failures),
             'failed_orders':failures,'unmatched_receipts':unmatched,
             'by_source_and_profile':summaries,'closed_trades':closed,'open_trades':opened,
+            'outcome_feedback':outcome_feedback(closed),
+            'feedback_policy':{'minimum_review_samples':10,'live_and_paper_separated':True,
+                'automatic_entry_or_risk_changes':False},
             'automatic_live_changes':False,'validated_model':False,
             'limitations':'Descriptive decision/outcome data; paper and live labels are separate. No fresh holdout/prospective model validation yet. Manual receipts need independent cost/rent reconstruction before profit labels.'}
 

@@ -2,8 +2,11 @@
 
 Active entry correction: `momentum_reclaim_enabled: true` requires an upward
 impulse, a 2–50% pullback, and a completed bullish reclaim above the pullback
-candle high with renewed candle volume. Broken lows, missing intervals and
-chased quotes remain WATCH. The $5,000 minimum and position/exit controls stay.
+candle high with renewed candle volume. One-hour buy volume must be at least
+1.1 times reported sell volume; missing sell-volume evidence or weaker buying
+remains WATCH. Broken lows, missing intervals and chased quotes remain WATCH.
+Two consecutive confirmed net losses pause new entries for one hour; open
+position exits remain active.
 Live entries also require the bounded on-chain concentration/activity check;
 this cannot certify human buyers or absence of manipulation. Paper models the
 same candle setup but does not certify these live on-chain checks. Earlier
@@ -19,7 +22,8 @@ Restart with `--adopt-rules` when flat to adopt changed live rules. Older dollar
 examples below describe the previous configuration.
 
 Adaptive Current/Moderate/Aggressive response profiles share one entry policy:
-at least **$5,000 hourly buy volume** and **3 completed
+at least **$5,000 hourly buy volume**, buy volume at least **1.1x sell volume**,
+and **3 completed
 one-minute candles**, with **$1.78 maximum input**, **$1 net TP** and **$0.20 net
 SL triggers** unchanged. The live drawdown failsafe now tracks bot P&L only,
 not manual wallet activity. Execution validation and loss controls remain.
@@ -35,13 +39,22 @@ three fixed profiles plus the selector on one shared stream. See
 This is rules-based selection, not an established profitable learning model.
 
 
-The meme execution runner is now `run_meme_live.py`: Pump trend/pullback signals,
-locally built Pump/PumpSwap swaps, unsigned simulation by default, and an explicit
-user-operated signed mode. See [setup, limits and execution scope](MEME_TRADER.md#current-meme-execution-runner).
-The approved dollar limits are $1.78 per position, a $1 net profit trigger and
-$0.20 net loss trigger, with a 5% portfolio drawdown halt. The supplied profile uses market/candle evidence plus a bounded on-chain
-concentration and trade-clustering gate; full bundle coverage and independent
-human-buyer verification remain unavailable. No real-money run has been launched or profitability established.
+The meme execution runner is `run_meme_live.py`: Pump momentum/pullback/reclaim
+signals, locally built Pump/PumpSwap swaps, unsigned simulation by default, and
+an explicit user-operated signed mode. See
+[setup, limits and execution scope](MEME_TRADER.md#current-meme-execution-runner).
+The configured policy requires $5,000 hourly buy volume, buy volume at least
+1.1x sell volume, completed candles, a volume-backed reclaim and a bounded
+on-chain concentration/activity check.
+Position and exit triggers are capped by the configured $1.78 maximum input,
+$1 net take-profit and $0.20 net-loss trigger at the example bankroll; the
+drawdown schedule is 15% base and 30% only after its promotion threshold.
+The on-chain check cannot verify human buyers, full bundle safety or absence of
+manipulation. Earlier live outcomes predate the current reclaim policy, so its
+profitability has not been established.
+The outcome report records entry flow, candle-range, turnover/liquidity and
+sampled on-chain context; ten outcomes per cohort are required before a
+negative cohort is flagged for review. This does not auto-optimize the strategy.
 
 The following sections also describe the separate legacy runner and earlier
 paper work. They do not change the new runner's selected rules.

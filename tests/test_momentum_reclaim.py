@@ -16,6 +16,7 @@ def policy():
 
 def setup():
     r=row();bars=r['candle_history']['candles']
+    r.update(buy_volume_usd=6000,sell_volume_usd=4000)
     for b,prices,vol in zip(bars,[(1,1.25,.98,1.2),(1.2,1.21,1,1.08),(1.08,1.24,1.02,1.22)],[100,200,300]):
         b.update(zip(('open','high','low','close'),prices));b['volume_usd']=vol
     r['price_usd']=1.22
@@ -37,6 +38,14 @@ class ReclaimTests(unittest.TestCase):
         self.assertEqual(assess_volume_candles(r,1200,policy())['action'],'watch')
         r=setup();r['buy_volume_usd']=4999
         self.assertEqual(assess_volume_candles(r,1200,policy())['action'],'reject')
+    def test_sell_dominance_and_missing_sell_volume_block_reclaim(self):
+        for sell in (6000,5500):
+            r=setup();r['sell_volume_usd']=sell
+            result=assess_volume_candles(r,1200,policy())
+            self.assertEqual(result['action'],'watch',result)
+            self.assertIn('hourly buy pressure',result['reason'])
+        r=setup();r.pop('sell_volume_usd')
+        self.assertEqual(assess_volume_candles(r,1200,policy())['action'],'watch')
     def test_adaptive_and_paper_share_setup(self):
         p=replace(policy(),entry_profile_mode='adaptive')
         self.assertEqual(assess_profiles(setup(),1200,p)['action'],'buy')

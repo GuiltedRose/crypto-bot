@@ -80,6 +80,23 @@ class MinimalPolicyTests(unittest.TestCase):
             self.assertEqual(session.trader.strategy_realized_pnl_usd,-.4)
             session.close()
 
+    def test_paper_consecutive_loss_cooldown_is_saved_across_restart(self):
+        from dataclasses import replace
+        with tempfile.TemporaryDirectory() as root:
+            configured=replace(rules(),loss_streak_limit=1)
+            session=PaperSession(root,0,configured,.065,100)
+            session.trader.consecutive_losses=1
+            session.trader.loss_cooldown_until=1300
+            session.process(row())
+            self.assertEqual(session.trader.loss_cooldown_until,1300)
+            session.close()
+            session=PaperSession(root)
+            self.assertEqual(session.trader.consecutive_losses,1)
+            self.assertEqual(session.trader.loss_cooldown_until,1300)
+            retry=row();retry['observed_at']=1210;retry['execution']['observed_at']=1210
+            self.assertEqual(session.process(retry)['action'],'reject')
+            session.close()
+
     def test_confirmed_tp_uses_unchanged_one_dollar_net_target(self):
         trader=PaperDipTrader(0,rules(),.065,100);trader.on_snapshot(row())
         r=row();r['observed_at']=1210;r['execution']['observed_at']=1210

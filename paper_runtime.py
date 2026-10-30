@@ -18,7 +18,8 @@ def encode_state(trader):
             'native_sol': trader.native_sol, 'sol_price_usd': trader.sol_price_usd,
             'strategy_capital_usd':trader.strategy_capital_usd,'strategy_peak_pnl_usd':trader.strategy_peak_pnl_usd,
             'strategy_realized_pnl_usd':trader.strategy_realized_pnl_usd,'strategy_risk':trader.strategy_risk,'peak': trader.peak, 'position': trader.position, 'halted': trader.halted,
-            'last_timestamp': trader.last_timestamp,
+            'last_timestamp': trader.last_timestamp,'consecutive_losses':trader.consecutive_losses,
+            'loss_cooldown_until':trader.loss_cooldown_until,
             'account_rent':[[list(key),value] for key,value in trader.account_rent.items()],
             'last_entry_bars':[[list(key),value] for key,value in trader.last_entry_bars.items()],
             'armed': [[list(key), value] for key, value in trader.armed.items()],
@@ -35,6 +36,8 @@ def decode_state(state):
     for field in ('strategy_capital_usd','strategy_peak_pnl_usd','strategy_realized_pnl_usd'):
         if field in state: setattr(trader,field,state[field])
     trader.strategy_risk=state.get('strategy_risk',{})
+    trader.consecutive_losses=state.get('consecutive_losses',0)
+    trader.loss_cooldown_until=state.get('loss_cooldown_until',0)
     trader.account_rent={tuple(key):value for key,value in state.get('account_rent',[])}
     trader.last_entry_bars={tuple(key):value for key,value in state.get('last_entry_bars',[])}
     trader.armed = {tuple(key): value for key, value in state['armed']}
@@ -190,6 +193,8 @@ class PaperSession:
                 'locked_rent_sol':sum(self.trader.account_rent.values()),
                 'valuation_as_of': self.trader.last_timestamp, 'realized_pnl_usd': realized,
                 'position': position, 'drawdown_halted': self.trader.halted,
+                'consecutive_losses':self.trader.consecutive_losses,
+                'loss_cooldown_until':self.trader.loss_cooldown_until,
                 'rules': asdict(self.trader.rules), 'event_counts': counts,
                 'data_kinds': sorted(data_kinds),
                 'safety_evidence_mode':self.trader.rules.evidence_mode,'drawdown_scope':'bot_positions' if self.trader.rules.entry_style=='volume_candles' else 'virtual_wallet',
