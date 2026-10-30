@@ -164,7 +164,8 @@ def tick(engine,sources,feed,wallets,mints,discover=True,progress=None):
             errors[mint]=type(error).__name__
             if progress: progress({'status':'candidate_source_error','mint':mint,'error_type':type(error).__name__})
     return {'status':'scan_complete','decisions':decisions,'source_errors':errors,'skipped_markets':skipped,
-            'realized_pnl_usd':engine.store.state['realized_pnl_usd'],'execution_enabled':engine.execute,'watched_candidates':watchlist.count(),'strategy_risk':engine.store.state.get('strategy_risk',{})}
+            'realized_pnl_usd':engine.store.state['realized_pnl_usd'],'execution_enabled':engine.execute,'watched_candidates':watchlist.count(),'strategy_risk':engine.store.state.get('strategy_risk',{}),
+            'neural_autonomy':{key:value for key,value in engine.store.state.get('neural_autonomy',{}).items() if key!='candidate'}}
 
 
 def cycle_rest(state,interval):
@@ -207,6 +208,7 @@ def main():
     parser.add_argument('--profile',choices=['current','moderate','aggressive','adaptive'],help='Shared entry-tolerance profile; dollar limits and slippage are unchanged')
     parser.add_argument('--rules',type=Path,default=Path('meme_live_rules.json'))
     parser.add_argument('--state-dir',type=Path)
+    parser.add_argument('--learning-paper-db',type=Path,default=Path('state/paper_volume/paper.sqlite'),help='Closed eligible paper outcomes for shared shadow weights; refunds and synthetic fills excluded')
     parser.add_argument('--watchlist',type=Path,default=Path('paper_watchlist.json'))
     parser.add_argument('--wallet-source-dir',type=Path,default=Path('state/wallet_watch'))
     parser.add_argument('--mint',action='append',default=[])
@@ -240,7 +242,7 @@ def main():
         parser.error('Use an isolated meme execution directory')
     store=MemeLiveStore(directory,user,rules,adopt_rules=args.adopt_rules,
         learning_wallet_db=args.wallet_source_dir/'wallet_watch.sqlite',
-        followed_wallets=wallets)
+        followed_wallets=wallets,learning_paper_db=args.learning_paper_db)
     try:
         # Bind mode as well as wallet/rules: never silently reuse unsigned state
         # (marks, simulated observations) as a funded live experiment.

@@ -193,10 +193,40 @@ optimization. The fixed one-hour pause after two consecutive confirmed losses
 is a risk guard, not a learned profitability claim. Manual receipt deltas do
 not become profit labels before cost/rent reconstruction.
 
-The live runner maintains an experimental, CPU-only online logistic learner
-trained **only** on followed-wallet outcomes. It uses the configured wallet
-list, not leaderboard-discovered wallets, the bot's own live trades, or paper
-trades. It begins observing each followed wallet at first collection, and only
+### Autonomous neural qualification
+
+The existing rule strategy continues selecting trades while the network learns.
+Thirty eligible training closes permit freezing a candidate; its weights and
+0.5 score threshold stay fixed throughout prospective validation. Each later
+entry records that candidate's score before submission. Paper and followed-wallet
+outcomes train weights but cannot count as confirmed-live validation.
+
+Promotion requires at least 30 later confirmed bot closes, including 20 the
+candidate would select and five it would reject, across at least 14 observed
+UTC days. Selected net P&L must be positive after conservatively charging all
+failed-order fees. The 2.5th percentile of 1,000 deterministic daily bootstrap
+resamples of the P&L improvement versus the incumbent must also be positive.
+This is an evidence filter, not proof of an edge or calibrated probability.
+A failed completed evaluation is consumed; the next candidate needs new
+prospective predictions. Historical replay cannot qualify a model.
+
+Promotion occurs only while flat, reconciled and not halted. The qualified
+network can only veto an otherwise eligible entry below 0.5; existing exits,
+position sizing, reserves, on-chain checks and execution checks remain mandatory.
+Two consecutive losses or nonpositive P&L across the last five post-activation
+closes rolls the model back to shadow collection. Changed policy, missing
+training provenance (including a paper balance reset), or a candidate older
+than 60 days invalidates it. Existing risk halts are never cleared.
+
+Learning/qualification work is skipped while a position or order is open so
+it cannot delay exits or reconciliation. The existing `--loop` automatically
+refreshes training and qualification while flat; status and transitions are
+journaled under `neural_autonomy`. Enabling `--execute` remains user controlled.
+
+The live runner maintains an experimental, CPU-only from-scratch neural network
+trained on confirmed bot closes, eligible active-run paper closes, and followed-wallet
+outcomes. Wallet receipt labels use the configured saved-wallet list, excluding
+leaderboard-discovered wallets. It begins observing each followed wallet at first collection, and only
 uses complete, receipt-backed buy-to-zero-balance cycles with contiguous
 signatures and unambiguous swap cashflows. A missed-signature gap, non-swap
 token movement, pre-existing position, account-creation/rent instruction or
@@ -210,14 +240,24 @@ that fee to USDC.
 The learner uses bounded feature weights and inverse-frequency class weights.
 Its features use followed-wallet buy size, the count of current followed-wallet
 buyers, and each wallet's prior closed-cycle win rate. It does not claim to
-learn candle/market effects from those wallet-only labels. It is a small binary
-model, not a neural-network framework. Its score does not
+learn candle/market effects from those wallet-only labels. It is a 9-input, 8-hidden-unit tanh network with a sigmoid binary output,
+trained by manual backpropagation and weighted binary cross entropy. Its dense
+math is adapted from the imported AI tool; the hidden gradient uses the old
+output weights, correcting the original update-order bug. Initialization is
+deterministic and imports no EEG data, pretrained weights or logistic weights.
+The model schema is `online-mlp-v1`; existing state rebuilds from eligible bot
+labels at startup. Parameters are validated JSON, with no new dependencies. Its score does not
 authorize entries, loosen risk checks, change thresholds, or increase position
-size. The report shows only followed-wallet training samples for the live
-model. Fewer than ten closed outcomes are insufficient for interpretation;
-the score is not calibrated or evidence of profitability. Paper/live outcomes
-remain useful diagnostics but do not train this model. The separate
-negative-cohort entry veto still uses confirmed bot-live trades only.
+size. The report exposes shared weights and sample counts by source.
+The default paper source is `state/paper_volume/paper.sqlite`, configurable with
+`run_meme_live.py --learning-paper-db`. A balance reset archives its run; all
+archived-run outcomes, explicit refunds/voids and synthetic fills are excluded
+from training and outcome cohorts. Weights rebuild each scan so a reset removes
+previously learned paper labels. Rent/principal returns never become wins.
+Paper remains modeled data and never counts as confirmed live performance.
+Fewer than ten closed outcomes are insufficient for interpretation; the score
+is not calibrated or evidence of profitability. The separate negative-cohort
+entry veto still uses confirmed bot-live trades only.
 
 The bot's own purchases never become independent fresh-market endorsements
 merely because they are in this research archive.

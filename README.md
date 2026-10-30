@@ -54,11 +54,13 @@ manipulation. Earlier live outcomes predate the current reclaim policy, so its
 profitability has not been established.
 The outcome report records entry flow, candle-range, turnover/liquidity and
 sampled on-chain context; after ten confirmed live outcomes, a negative cohort
-blocks new entries in matching contexts. Paper outcomes do not alter live
-decisions, and thresholds/stakes are not auto-optimized. A CPU-only online
-logistic learner trains only on contiguous receipt-reconstructed outcomes from
-the configured followed-wallet list; its uncalibrated score is shadow-only and
-never authorizes or sizes trades. Small samples are not validated evidence of profitability; see
+blocks new entries in matching contexts. Paper outcomes help train candidates but cannot qualify them for live influence;
+thresholds and stakes are not auto-optimized. A CPU-only from-scratch
+neural network combines confirmed bot closes, eligible active-run paper closes,
+and contiguous receipt-reconstructed outcomes from the configured saved-wallet list.
+Reset/archived, refunded and synthetic paper outcomes are excluded; its score remains shadow-only until a frozen candidate passes prospective
+confirmed-live qualification. A qualified model may veto entries; it cannot
+authorize an otherwise blocked trade or increase its size. Small samples are not validated evidence of profitability; see
 [learning and outcome limits](MEME_TRADER.md#the-bot-also-researches-its-own-orders).
 
 The following sections also describe the separate legacy runner and earlier

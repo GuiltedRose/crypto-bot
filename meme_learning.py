@@ -106,44 +106,34 @@ def _followed_entry_features(snapshot,model):
 
 
 def new_weighted_model():
-    return {'version':'online-logistic-v1','samples':0,'wins':0,'losses':0,
-            'weights':{'bias':0.,**{feature:0. for feature in MODEL_FEATURES}},
+    from neural_network import VERSION,initialize
+    return {'version':VERSION,'samples':0,'wins':0,'losses':0,
+            'feature_names':list(MODEL_FEATURES),'weights':initialize(len(MODEL_FEATURES)),
             'last_trade_signature':None,'wallet_stats':{}}
 
 
-def _sigmoid(value):
-    value=max(-30.,min(30.,value))
-    return 1/(1+math.exp(-value))
-
-
 def weighted_prediction(model,context):
-    weights=model.get('weights',{})
+    from neural_network import VERSION,forward
+    if model.get('version')!=VERSION or model.get('feature_names')!=list(MODEL_FEATURES):
+        raise ValueError('Unsupported neural model version or feature schema; rebuild required')
     features=model_features(context)
-    score=weights.get('bias',0.)+sum(weights.get(name,0.)*value for name,value in features.items())
-    return {'version':model.get('version','online-logistic-v1'),
-            'training_samples':model.get('samples',0),
-            'positive_outcomes':model.get('wins',0),
-            'score':_sigmoid(score),'features':features,
+    probability,_=forward(model['weights'],list(features.values()))
+    return {'version':VERSION,'training_samples':model.get('samples',0),
+            'positive_outcomes':model.get('wins',0),'score':probability,'features':features,
             'interpretation':'uncalibrated_shadow_score_not_entry_authorization'}
 
 
 def update_weighted_model(model,context,net_pnl_usd,trade_signature=None):
+    from neural_network import VERSION,train
     if not _finite(net_pnl_usd): raise ValueError('Finite confirmed trade P&L required for learning')
     if not isinstance(context,dict) or not context:
         return dict(model or new_weighted_model()),{'updated':False,'reason':'recorded entry context required'}
     model=dict(model or new_weighted_model())
-    if model.get('version')!='online-logistic-v1':
-        raise ValueError('Unsupported shadow learning model version')
+    if model.get('version')!=VERSION or model.get('feature_names')!=list(MODEL_FEATURES):
+        raise ValueError('Unsupported neural model version or feature schema; rebuild required')
     if trade_signature and model.get('last_trade_signature')==trade_signature:
         return model,{'updated':False,'reason':'trade already learned'}
-    weights=dict(new_weighted_model()['weights'])
-    existing=model.get('weights',{})
-    for key in weights:
-        value=existing.get(key,0.)
-        if not _finite(value): raise ValueError('Invalid persisted shadow model weight')
-        weights[key]=max(-8.,min(8.,value))
     features=model_features(context)
-    probability=_sigmoid(weights['bias']+sum(weights[name]*value for name,value in features.items()))
     target=1. if net_pnl_usd>0 else 0.
     wins=model.get('wins',0);losses=model.get('losses',0)
     if type(wins) is not int or type(losses) is not int or wins<0 or losses<0:
@@ -151,16 +141,12 @@ def update_weighted_model(model,context,net_pnl_usd,trade_signature=None):
     prior_samples=wins+losses
     class_count=wins if target else losses
     sample_weight=1. if prior_samples==0 else min(3.,prior_samples/(2*max(1,class_count)))
-    error=target-probability
-    weights['bias']=max(-8.,min(8.,weights['bias']+MODEL_LEARNING_RATE*sample_weight*error))
-    for name,value in features.items():
-        weights[name]=max(-8.,min(8.,weights[name]+MODEL_LEARNING_RATE*(sample_weight*error*value-MODEL_L2*weights[name])))
-    updated={'version':'online-logistic-v1','samples':model.get('samples',0)+1,
-        'wins':wins+int(target),'losses':losses+int(not target),'weights':weights,
-        'last_trade_signature':trade_signature or model.get('last_trade_signature'),
-        'wallet_stats':model.get('wallet_stats',{})}
-    return updated,{'updated':True,'target_net_positive':bool(target),
-        'class_weight':sample_weight,
+    weights,probability=train(model['weights'],list(features.values()),target,
+        MODEL_LEARNING_RATE,sample_weight,MODEL_L2)
+    updated={**model,'samples':prior_samples+1,'wins':wins+int(target),
+        'losses':losses+int(not target),'weights':weights,
+        'last_trade_signature':trade_signature or model.get('last_trade_signature')}
+    return updated,{'updated':True,'target_net_positive':bool(target),'class_weight':sample_weight,
         'probability_before_update':probability,'prediction_after_update':weighted_prediction(updated,context)['score'],
         'training_samples':updated['samples']}
 
@@ -219,13 +205,24 @@ def live_outcomes(path):
     return result,([opened] if opened else []),failures,unmatched
 
 
+def _paper_correction(event):
+    return (event.get('action') in {'paper_refund','paper_trade_refund','paper_trade_refunded',
+            'paper_void','paper_trade_voided','paper_reimbursement','paper_reimbursed'}
+        or any(event.get(key) is True for key in ('refunded','voided','reimbursed')))
+
+
 def paper_outcomes(path):
     db=sqlite3.connect('file:'+str(Path(path).resolve())+'?mode=ro',uri=True)
     result=[];unclosed=[];unmatched=0
     try:
-        for run, in db.execute('SELECT id FROM paper_runs ORDER BY created').fetchall():
+        for run,archived in db.execute('SELECT id,archived FROM paper_runs ORDER BY created').fetchall():
             opened=None
-            for sequence,at,event_raw,snapshot_raw in db.execute('SELECT sequence,observed,event,snapshot FROM paper_events WHERE run_id=? ORDER BY sequence',(run,)):
+            rows=db.execute('SELECT sequence,observed,event,snapshot FROM paper_events WHERE run_id=? ORDER BY sequence',(run,)).fetchall()
+            # Corrections may arrive after a close. Never learn an earlier label
+            # from a run whose paper fills were reimbursed/voided. Rent reclaim
+            # is principal accounting, not a trade refund or a profit label.
+            corrected=archived is not None or any(_paper_correction(json.loads(row[2])) for row in rows)
+            for sequence,at,event_raw,snapshot_raw in rows:
                 event=json.loads(event_raw);snapshot=json.loads(snapshot_raw)
                 if event['action']=='paper_buy':
                     if opened: unmatched+=1
@@ -237,12 +234,15 @@ def paper_outcomes(path):
                     context['signal']={'metrics':signal_metrics}
                     opened={'source':'bot_paper','run_id':run,'mint':event['mint'],'entry_at':at,
                             'entry_profile':event.get('entry_profile'),'entry_context':context,
-                            'entry_data_kind':event.get('data_kind','supplied_observation'),'status':'open'}
+                            'entry_data_kind':event.get('data_kind','supplied_observation'),
+                            'training_eligible':not corrected and event.get('data_kind')!='synthetic' and snapshot.get('synthetic') is not True,
+                            'status':'open'}
                 elif event['action']=='paper_sell':
                     if not opened or opened['mint']!=event['mint']: unmatched+=1;continue
                     result.append({**opened,'exit_at':at,'exit_signature':f'paper:{run}:{sequence}',
                                    'net_pnl_usd':event['pnl_usd'],'exit_reason':event.get('reason'),
-                                   'status':'closed','label_kind':'modeled_paper_pnl'})
+                                   'status':'closed','label_kind':'modeled_paper_pnl',
+                                   'training_eligible':opened['training_eligible'] and event.get('data_kind')!='synthetic' and snapshot.get('synthetic') is not True})
                     opened=None
             if opened: unclosed.append(opened)
     finally: db.close()
@@ -270,6 +270,38 @@ def train_followed_wallet_model(outcomes):
         'brier_score':sum((score-int(won))**2 for score,won in scored)/count if count else None}}
 
 
+def train_shared_model(external=(),live=(),paper=()):
+    """Rebuild from eligible labels so corrections remove previously learned data.
+
+    Paper labels stay modeled; they never count as confirmed live performance.
+    Sources are namespaced and deduplicated before chronological updates.
+    """
+    model=new_weighted_model();seen=set();counts=defaultdict(int)
+    rows=[]
+    for source,outcomes,pnl_key in (('followed_wallet',external,'net_pnl_quote'),
+            ('bot_live',live,'net_pnl_usd'),('bot_paper',paper,'net_pnl_usd')):
+        for row in outcomes:
+            if (row.get('training_eligible',True) is not True or _paper_correction(row)
+                or row.get('entry_data_kind')=='synthetic'
+                or not isinstance(row.get('entry_context'),dict) or not row['entry_context']
+                or not _finite(row.get(pnl_key))): continue
+            identity=(source,row.get('run_id'),row.get('wallet'),row.get('exit_signature'))
+            if not identity[-1] or identity in seen: continue
+            seen.add(identity)
+            rows.append((row['exit_at'],repr(identity),source,row,pnl_key))
+    wallet_stats={}
+    for _,identity,source,row,pnl_key in sorted(rows):
+        model,_=update_weighted_model(model,row['entry_context'],row[pnl_key],identity)
+        counts[source]+=1
+        if source=='followed_wallet':
+            stats=wallet_stats.setdefault(row['wallet'],{'closed_trades':0,'wins':0})
+            stats['closed_trades']+=1;stats['wins']+=int(row[pnl_key]>0)
+            model['wallet_stats'][row['wallet']]={**stats,'win_rate':stats['wins']/stats['closed_trades']}
+    model['source_samples']=dict(counts)
+    model['training_ids']=[identity for _,identity,_,_,_ in sorted(rows)]
+    return model
+
+
 def _feedback_features(context):
     stored=context.get('flow_metrics')
     metrics=stored if isinstance(stored,dict) else _flow_metrics(context)
@@ -293,6 +325,7 @@ def outcome_feedback(closed,minimum_review_samples=10):
     groups=defaultdict(list)
     for trade in closed:
         context=trade.get('entry_context')
+        if trade.get('training_eligible',True) is not True or _paper_correction(trade): continue
         if not isinstance(context,dict): continue
         for feature,band in _feedback_features(context).items():
             groups[(trade['source'],feature,band)].append(trade['net_pnl_usd'])
@@ -324,13 +357,16 @@ def report(live=None,paper=None,followed_wallet_db=None,followed_wallets=()):
         if path and Path(path).exists():
             c,o,f,u=source(path);closed+=c;opened+=o;failures+=f;unmatched+=u
     groups=defaultdict(list)
-    for trade in closed: groups[(trade['source'],trade.get('entry_profile') or 'unclassified')].append(trade['net_pnl_usd'])
+    for trade in closed:
+        if trade.get('training_eligible',True) is not True: continue
+        groups[(trade['source'],trade.get('entry_profile') or 'unclassified')].append(trade['net_pnl_usd'])
     summaries=[]
     for (source,profile),values in groups.items():
         summaries.append({'source':source,'profile':profile,'trades':len(values),'net_pnl_usd':sum(values),
             'mean_net_pnl_usd':sum(values)/len(values),'wins':sum(v>0 for v in values),'losses':sum(v<0 for v in values),
             'worst_trade_usd':min(values)})
     learned_models={}
+    external=[]
     if followed_wallet_db and Path(followed_wallet_db).exists():
         from wallet_watch import followed_wallet_outcomes
         external=followed_wallet_outcomes(followed_wallet_db,followed_wallets)
@@ -344,13 +380,15 @@ def report(live=None,paper=None,followed_wallet_db=None,followed_wallets=()):
             **metrics,'status':'insufficient_data_for_interpretation' if model['samples']<10 else 'shadow_only',
             'trains_live_model':True,'automatically_changes_entries':False}
     else:
-        learned_models['followed_wallet_model']={'version':'online-logistic-v1',
+        learned_models['followed_wallet_model']={'version':new_weighted_model()['version'],
             'training_samples':0,'positive_outcomes':0,'negative_outcomes':0,
             'feature_weights':new_weighted_model()['weights'],
             'followed_wallets':[],'training_source':'configured_followed_wallets_only',
             'pnl_basis':'receipt_reconstructed_quote_currency_flat_to_flat',
             'status':'no_followed_wallet_receipt_data','trains_live_model':True,
             'automatically_changes_entries':False}
+    shared=train_shared_model(external,[t for t in closed if t['source']=='bot_live'],[t for t in closed if t['source']=='bot_paper'])
+    learned_models['shared_model']=shared
     return {'closed_bot_trades':len(closed),'open_or_unfinished_bot_trades':len(opened),'failed_live_orders':len(failures),
             'failed_live_network_cost_usd':sum(f.get('network_cost_usd',0) for f in failures),
             'live_realized_pnl_including_failed_orders_usd':sum(t['net_pnl_usd'] for t in closed if t['source']=='bot_live')-sum(f.get('network_cost_usd',0) for f in failures),
@@ -359,11 +397,12 @@ def report(live=None,paper=None,followed_wallet_db=None,followed_wallets=()):
             'outcome_feedback':outcome_feedback(closed),
             'weighted_learning':learned_models,
             'feedback_policy':{'minimum_review_samples':10,'live_and_paper_separated':True,
-                'source_specific_outcome_cohorts':True,'bot_and_paper_outcomes_train_live_model':False,
+                'source_specific_outcome_cohorts':True,'bot_and_paper_outcomes_train_live_model':True,'refunded_paper_trades_train_model':False,
                 'negative_live_cohorts_block_new_entries':True,
+                'neural_selection_requires_prospective_qualification':True,
                 'automatic_risk_or_position_size_changes':False},
             'automatic_live_changes':False,'validated_model':False,
-            'limitations':'Bot and paper outcome reports do not train the live model. Followed-wallet labels require a complete forward-observed flat-to-flat receipt cycle. No prospective validation yet.'}
+            'limitations':'Eligible closed bot and paper outcomes train shared shadow weights; paper remains modeled, not confirmed performance. Followed-wallet labels require a complete forward-observed flat-to-flat receipt cycle. No prospective validation yet.'}
 
 
 def export_report(live,paper,output,followed_wallet_db=None,followed_wallets=()):

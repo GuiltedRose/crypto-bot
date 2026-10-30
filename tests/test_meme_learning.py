@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from meme_learning import (adverse_live_cohorts,decision_context,new_weighted_model,
-    outcome_feedback,report,train_followed_wallet_model,update_weighted_model,weighted_prediction)
+    outcome_feedback,report,train_followed_wallet_model,train_shared_model,paper_outcomes,update_weighted_model,weighted_prediction)
 from meme_live import MemeLiveStore
 from meme_dip import DipRules
 from test_trend_pullback import snapshot
@@ -50,7 +50,7 @@ class BotLearningTests(unittest.TestCase):
             store.save('legacy_state_without_learner',{})
             store.close()
             migrated=MemeLiveStore(root,'user',DipRules())
-            self.assertEqual(migrated.state['learning_model_live']['samples'],0)
+            self.assertEqual(migrated.state['learning_model_live']['samples'],1)
             migrated.close()
             data=report(Path(root)/'meme_live.sqlite')
             self.assertEqual(data['closed_bot_trades'],1)
@@ -97,7 +97,8 @@ class BotLearningTests(unittest.TestCase):
         self.assertFalse(skipped['updated']);self.assertEqual(missing['samples'],1)
         model,loss=update_weighted_model(model,context,-.2,'exit-2')
         self.assertTrue(loss['updated']);self.assertEqual(model['losses'],1)
-        self.assertTrue(all(-8<=weight<=8 for weight in model['weights'].values()))
+        from neural_network import validate
+        validate(model['weights'],len(model['feature_names']))
 
     def test_only_followed_wallet_outcomes_train_the_live_model(self):
         context={'followed_wallet_features':{'buy_size_quote':.2,'prior_win_rate':.6}}
@@ -107,8 +108,8 @@ class BotLearningTests(unittest.TestCase):
             'exit_at':3,'exit_signature':'sale-b','net_pnl_quote':-.05}]
         model,_=train_followed_wallet_model(outcomes)
         self.assertEqual((model['samples'],model['wins'],model['losses']),(2,1,1))
-        self.assertIn('followed_wallet_buy_size',model['weights'])
-        self.assertIn('followed_wallet_prior_win_rate',model['weights'])
+        self.assertIn('followed_wallet_buy_size',model['feature_names'])
+        self.assertIn('followed_wallet_prior_win_rate',model['feature_names'])
 
     def test_confirmed_live_negative_cohort_blocks_only_after_minimum_sample(self):
         with tempfile.TemporaryDirectory() as root:
@@ -127,3 +128,40 @@ class BotLearningTests(unittest.TestCase):
             self.assertEqual(adverse_live_cohorts(Path(root)/'meme_live.sqlite',candidate)[0]['trades'],10)
             self.assertTrue(all(row['source']=='bot_live' for row in report(Path(root)/'meme_live.sqlite')['outcome_feedback']))
             store.close()
+
+
+class SharedLearningTests(unittest.TestCase):
+    def test_paper_reset_removes_archived_labels_from_live_weights(self):
+        import sqlite3,json
+        with tempfile.TemporaryDirectory() as root:
+            paper=Path(root)/'paper.sqlite'
+            db=sqlite3.connect(paper)
+            db.executescript('CREATE TABLE paper_runs(id TEXT,created REAL,archived REAL); CREATE TABLE paper_events(sequence INTEGER,run_id TEXT,observed REAL,event TEXT,snapshot TEXT);')
+            db.execute("INSERT INTO paper_runs VALUES('run',0,NULL)")
+            context={'flow_metrics':{'buy_sell_ratio':2},'observed_at':1}
+            for seq,event in enumerate(({'action':'paper_buy','mint':'coin'},
+                    {'action':'paper_sell','mint':'coin','pnl_usd':-.2}),1):
+                db.execute('INSERT INTO paper_events VALUES(?,?,?,?,?)',(seq,'run',seq,json.dumps(event),json.dumps(context)))
+            db.commit()
+            store=MemeLiveStore(Path(root)/'live','user',DipRules(),learning_paper_db=paper)
+            self.assertEqual(store.state['learning_model_live']['source_samples'],{'bot_paper':1})
+            # Returning principal is not a winning trade or another sample.
+            db.execute('INSERT INTO paper_events VALUES(3,?,?,?,?)',('run',3,json.dumps({'action':'paper_rent_reclaimed','pnl_usd':100}),'{}'))
+            db.commit();store.refresh_learning_model()
+            self.assertEqual(store.state['learning_model_live']['samples'],1)
+            db.execute("UPDATE paper_runs SET archived=4 WHERE id='run'")
+            db.execute("INSERT INTO paper_runs VALUES('fresh',4,NULL)")
+            db.commit();store.refresh_learning_model()
+            self.assertEqual(store.state['learning_model_live']['samples'],0)
+            self.assertFalse(paper_outcomes(paper)[0][0]['training_eligible'])
+            self.assertEqual(report(paper=paper)['outcome_feedback'],[])
+            store.close();db.close()
+
+    def test_shared_sources_deduplicate_and_exclude_ineligible_paper(self):
+        context={'flow_metrics':{'buy_sell_ratio':2}}
+        live={'entry_context':context,'exit_at':1,'exit_signature':'same','net_pnl_usd':.2}
+        paper=dict(live,run_id='r',exit_at=2)
+        external={'entry_context':context,'exit_at':3,'exit_signature':'wallet-exit','wallet':'saved','net_pnl_quote':-.1}
+        model=train_shared_model([external],[live,live],[paper,paper,dict(paper,exit_signature='void',training_eligible=False)])
+        self.assertEqual(model['source_samples'],{'bot_live':1,'bot_paper':1,'followed_wallet':1})
+        self.assertEqual((model['samples'],model['wins'],model['losses']),(3,2,1))

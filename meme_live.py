@@ -1,7 +1,7 @@
 """One-position meme strategy coordinator; fills require confirmed receipts.
 
 The runner selects read-only versus signed execution. This module does not
-load secrets, auto-promote paper rules, or retrain itself on its own fills.
+load secrets, auto-promote paper rules, or promote modeled outcomes into confirmed performance.
 """
 from dataclasses import asdict
 import fcntl
@@ -25,9 +25,10 @@ def positive(value):
 
 class MemeLiveStore:
     def __init__(self,directory,user,rules,adopt_rules=False,learning_wallet_db=None,
-                 followed_wallets=()):
+                 followed_wallets=(),learning_paper_db=None):
         self.directory=Path(directory);self.directory.mkdir(parents=True,exist_ok=True)
         self.learning_wallet_db=Path(learning_wallet_db) if learning_wallet_db else None
+        self.learning_paper_db=Path(learning_paper_db) if learning_paper_db else None
         self.followed_wallets=tuple(dict.fromkeys(followed_wallets))
         self.lock=(self.directory/'runner.lock').open('a')
         try: fcntl.flock(self.lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -66,18 +67,29 @@ class MemeLiveStore:
         self.refresh_learning_model(record_event='shadow_learning_initialized')
 
     def refresh_learning_model(self,record_event='shadow_learning_refreshed'):
-        from meme_learning import new_weighted_model,train_followed_wallet_model
+        if self.state.get('pending') or self.state.get('position'):
+            return self.state.get('learning_model_live')
+        from meme_learning import train_shared_model,live_outcomes,paper_outcomes
         from wallet_watch import followed_wallet_outcomes
         outcomes=followed_wallet_outcomes(self.learning_wallet_db,self.followed_wallets) if self.learning_wallet_db else []
-        model,_=train_followed_wallet_model(outcomes)
-        if not outcomes: model=new_weighted_model()
+        live,_,failures,_=live_outcomes(self.directory/'meme_live.sqlite')
+        paper=paper_outcomes(self.learning_paper_db)[0] if self.learning_paper_db and self.learning_paper_db.exists() else []
+        model=train_shared_model(outcomes,live,paper)
         if self.state.get('learning_model_live')!=model:
             self.state['learning_model_live']=model
             self.save(record_event,{'version':model['version'],
                 'training_samples':model['samples'],
-                'training_source':'configured_followed_wallets_only',
+                'training_source':'configured_followed_wallets_and_bot_live_and_eligible_paper',
+                'source_samples':model['source_samples'],
                 'followed_wallets':len(self.followed_wallets),
                 'positive_outcomes':model['wins'],'negative_outcomes':model['losses']})
+        from neural_autonomy import advance
+        previous=self.state.get('neural_autonomy')
+        autonomy=advance(previous,model,live,self.state['binding'],time.time(),
+            can_activate=not self.state.get('halted'),failures=failures)
+        if autonomy!=previous:
+            self.state['neural_autonomy']=autonomy
+            self.save('neural_autonomy_updated',{'status':autonomy['status'],'qualification':autonomy.get('qualification')})
         return self.state['learning_model_live']
 
     def save(self,kind,body):
@@ -266,7 +278,7 @@ class MemeLiveEngine:
             position=s['position']
             pnl=fill['net_cash_lamports']/1e9*p['sol_price_usd']-position['cost_usd']
             fill['learning_update']={'updated':False,
-                'reason':'live bot outcomes are diagnostic; model trains only on followed-wallet outcomes'}
+                'reason':'shared shadow weights rebuild from eligible labels on the next scan'}
             s['realized_pnl_usd']+=pnl;s['position']=None;fill['pnl_usd']=pnl
         s['rent_accounts']=sorted(set(s.get('rent_accounts',[])+[p['base_account'],p['quote_account']]))
         s['pending']=None
@@ -325,6 +337,14 @@ class MemeLiveEngine:
                 return {'status':'historical_loss_cohort_block',
                         'reason':'Confirmed live outcomes show negative expectancy in this market context',
                         'feedback':adverse,'signal':signal}
+            from neural_autonomy import entry_decision
+            frozen=self.store.state.get('neural_autonomy',{}).get('candidate',{}).get('model')
+            neural_context=decision_context(snapshot,entry_rules,assessment,signal,
+                entry_profile=profile_name,weighted_model=frozen)
+            neural_decision=entry_decision(self.store.state.get('neural_autonomy'),neural_context)
+            if not neural_decision['allow']:
+                self.store.save('neural_entry_veto',neural_decision)
+                return {'status':'neural_entry_veto','neural_selection':neural_decision}
             bar=int(snapshot['candle_history']['candles'][-1]['timestamp'])
             used=self.store.db.execute('SELECT bar FROM bars WHERE mint=? AND pool=?',(snapshot['mint'],snapshot['pool'])).fetchone()
             if used and used[0]>=bar: return {'status':'already_entered_on_completed_candle'}
@@ -382,6 +402,7 @@ class MemeLiveEngine:
         context_record=decision_context(snapshot,self.rules,assessment if side=='buy' else None,
             signal if side=='buy' else None,risk_report,profile_name,
             self.store.state.get('learning_model_live') if side=='buy' else None)
+        if side=='buy': context_record['neural_selection']=neural_decision
         intent=dict(id=str(uuid.uuid4()),side=side,mint=snapshot['mint'],pool=snapshot['pool'],kind=snapshot['market_kind'],
             take_profit_usd=profit_target,max_loss_usd=loss_limit,entry_context=context_record,onchain_risk=risk_report,entry_profile=profile_name,input_units=units,minimum=context['min_output'],sol_price_usd=sol_price,bar=bar,reason=reason,
             base_account=str(market['base_user']),quote_account=str(market['quote_user']),simulation=simulated,

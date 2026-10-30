@@ -302,7 +302,7 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(self.store.state['learning_model_live']['samples'],0)
         self.assertIsNone(self.store.state['position'])
         self.store.close();self.store=MemeLiveStore(self.temp.name,self.user,self.rules)
-        self.assertEqual(self.store.state['learning_model_live']['samples'],0)
+        self.assertEqual(self.store.state['learning_model_live']['samples'],1)
 
 class PumpSwapTests(unittest.TestCase):
     def setUp(self):
