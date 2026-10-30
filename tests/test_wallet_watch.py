@@ -3,7 +3,10 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from wallet_watch import ALPHABET, SOL, SPECS, MAINNET, WalletWatcher, classify_transaction
+from wallet_watch import (ALPHABET,SOL,SPECS,MAINNET,WalletWatcher,classify_transaction,
+                          followed_wallet_outcomes)
+from meme_dip import DipRules
+from meme_live import MemeLiveStore
 
 WALLET = '11111111111111111111111111111111'
 MINT = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
@@ -49,6 +52,61 @@ class WalletWatchTests(unittest.TestCase):
         self.assertFalse(event['independent_human_verified'])
         tx['transaction']['message']['instructions'] = []
         self.assertEqual(classify_transaction(tx, WALLET, 'sig', 1100)['signals'], [])
+
+    def test_followed_wallet_receipt_cycle_is_labeled_only_after_forward_baseline(self):
+        class Rpc:
+            records=[{'signature':'baseline','blockTime':1000,'err':None}]
+            txs={'baseline':transaction('buy',1000,'baseline')}
+            def call(self,method,params):
+                if method=='getGenesisHash': return MAINNET
+                if method=='getSignaturesForAddress': return self.records
+                return copy.deepcopy(self.txs[params[0]])
+        with tempfile.TemporaryDirectory() as root:
+            rpc=Rpc();watcher=WalletWatcher(Path(root)/'watch.sqlite',rpc)
+            watcher.set_followed_wallets([WALLET])
+            watcher.poll([WALLET],now=1000)
+            self.assertEqual(followed_wallet_outcomes(Path(root)/'watch.sqlite',[WALLET]),[])
+            buy=transaction('buy',1010,'buy')
+            buy['meta']['postBalances'][0]=1_899_995_000
+            sell=transaction('sell',1020,'sell')
+            sell['meta']['postBalances'][0]=2_119_995_000
+            rpc.txs.update(buy=buy,sell=sell)
+            rpc.records=[{'signature':'buy','blockTime':1010,'err':None},
+                         {'signature':'baseline','blockTime':1000,'err':None}]
+            watcher.poll([WALLET],now=1010)
+            rpc.records=[{'signature':'sell','blockTime':1020,'err':None},
+                         {'signature':'buy','blockTime':1010,'err':None},
+                         {'signature':'baseline','blockTime':1000,'err':None}]
+            watcher.poll([WALLET],now=1020)
+            outcomes=followed_wallet_outcomes(Path(root)/'watch.sqlite',[WALLET])
+            self.assertEqual(len(outcomes),1)
+            self.assertEqual(outcomes[0]['label_kind'],'receipt_reconstructed_flat_to_flat')
+            self.assertAlmostEqual(outcomes[0]['net_pnl_quote'],.01999)
+            self.assertEqual(outcomes[0]['entry_context']['wallet_origin'],'configured_followed_wallet')
+            self.assertEqual(followed_wallet_outcomes(Path(root)/'watch.sqlite',['other-wallet']),[])
+            live=MemeLiveStore(Path(root)/'live','bot-wallet',DipRules(),
+                learning_wallet_db=Path(root)/'watch.sqlite',followed_wallets=[WALLET])
+            self.assertEqual(live.state['learning_model_live']['samples'],1)
+            self.assertEqual(live.state['learning_model_live']['wins'],1)
+            live.close()
+            watcher.db.close()
+
+    def test_followed_wallet_signature_gap_prevents_outcome_labels(self):
+        class Rpc:
+            records=[{'signature':'baseline','blockTime':1000,'err':None}]
+            def call(self,method,params):
+                if method=='getGenesisHash': return MAINNET
+                if method=='getSignaturesForAddress': return self.records
+                return transaction('buy',1010,params[0])
+        with tempfile.TemporaryDirectory() as root:
+            rpc=Rpc();watcher=WalletWatcher(Path(root)/'watch.sqlite',rpc)
+            watcher.set_followed_wallets([WALLET]);watcher.poll([WALLET],now=1000)
+            rpc.records=[{'signature':'new-'+str(i),'blockTime':1010+i,'err':None} for i in range(20)]
+            watcher.poll([WALLET],now=1030)
+            self.assertTrue(watcher.db.execute(
+                "SELECT 1 FROM followed_wallet_events WHERE wallet=? AND kind='gap'",(WALLET,)).fetchone())
+            self.assertEqual(followed_wallet_outcomes(Path(root)/'watch.sqlite',[WALLET]),[])
+            watcher.db.close()
 
     def test_wrong_signer_wrong_user_wrong_signature_failed_or_old_receipt_rejected(self):
         mutations = [lambda tx: tx['transaction']['message']['accountKeys'][0].update(signer=False),

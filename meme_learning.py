@@ -10,6 +10,13 @@ import math
 from pathlib import Path
 import sqlite3
 
+MODEL_FEATURES=('buy_sell_balance','turnover_vs_liquidity','candle_range',
+                'impulse_strength','pullback_depth','reclaim_volume',
+                'followed_wallet_buy_size','followed_wallet_prior_win_rate',
+                'followed_wallet_activity')
+MODEL_LEARNING_RATE=.15
+MODEL_L2=.01
+
 
 def _finite(value):
     return type(value) in (int,float) and math.isfinite(value)
@@ -44,7 +51,121 @@ def _flow_metrics(snapshot):
     }
 
 
-def decision_context(snapshot,rules,scorecard=None,signal=None,risk=None,entry_profile=None):
+def model_features(context):
+    flow=context.get('flow_metrics')
+    if not isinstance(flow,dict): flow=_flow_metrics(context)
+    signal=context.get('signal')
+    signal=signal.get('metrics',{}) if isinstance(signal,dict) else {}
+    signal=signal if isinstance(signal,dict) else {}
+
+    def bounded(value,scale,*,logarithmic=False):
+        if not _finite(value) or value<0: return 0.
+        value=math.log1p(value) if logarithmic else value
+        return max(-1.,min(1.,value/scale*2-1))
+
+    ratio=flow.get('buy_sell_ratio')
+    balance=0. if not _finite(ratio) else max(-1.,min(1.,(ratio-1)/(ratio+1)))
+    turnover=bounded(flow.get('hourly_turnover_to_liquidity'),math.log1p(20),logarithmic=True)
+    candle=bounded(flow.get('max_completed_candle_range_fraction'),.5)
+    impulse=bounded(signal.get('runup_gain_fraction'),.15)
+    pullback=bounded(signal.get('pullback_fraction'),.5)
+    reclaim=bounded(signal.get('reclaim_to_pullback_volume_ratio'),2.)
+    wallet=context.get('followed_wallet_features')
+    wallet=wallet if isinstance(wallet,dict) else {}
+    buy_size=bounded(wallet.get('buy_size_quote'),math.log1p(5),logarithmic=True)
+    win_rate=wallet.get('prior_win_rate')
+    prior_rate=0. if not _finite(win_rate) else max(-1.,min(1.,2*win_rate-1))
+    activity=bounded(wallet.get('activity_count'),3.)
+    return dict(zip(MODEL_FEATURES,(balance,turnover,candle,impulse,pullback,reclaim,
+                                    buy_size,prior_rate,activity)))
+
+
+def _followed_entry_features(snapshot,model):
+    research=snapshot.get('research_context')
+    signals=research.get('wallet_signals',[]) if isinstance(research,dict) else []
+    stats=model.get('wallet_stats',{}) if isinstance(model,dict) else {}
+    observations={}
+    for group in signals if isinstance(signals,list) else []:
+        if not isinstance(group,dict): continue
+        for row in group.get('observations',[]):
+            if not isinstance(row,dict) or row.get('wallet_origin')!='pinned':
+                continue
+            wallet=row.get('wallet')
+            size=row.get('quote_delta_amount')
+            if not isinstance(wallet,str) or not _finite(size) or size>=0:
+                continue
+            observations[wallet]=-size
+    win_rates=[]
+    for wallet in observations:
+        record=stats.get(wallet)
+        rate=record.get('win_rate') if isinstance(record,dict) else None
+        if _finite(rate) and 0<=rate<=1: win_rates.append(rate)
+    return {'buy_size_quote':sum(observations.values())/len(observations) if observations else None,
+        'prior_win_rate':sum(win_rates)/len(win_rates) if win_rates else None,
+        'activity_count':len(observations)}
+
+
+def new_weighted_model():
+    return {'version':'online-logistic-v1','samples':0,'wins':0,'losses':0,
+            'weights':{'bias':0.,**{feature:0. for feature in MODEL_FEATURES}},
+            'last_trade_signature':None,'wallet_stats':{}}
+
+
+def _sigmoid(value):
+    value=max(-30.,min(30.,value))
+    return 1/(1+math.exp(-value))
+
+
+def weighted_prediction(model,context):
+    weights=model.get('weights',{})
+    features=model_features(context)
+    score=weights.get('bias',0.)+sum(weights.get(name,0.)*value for name,value in features.items())
+    return {'version':model.get('version','online-logistic-v1'),
+            'training_samples':model.get('samples',0),
+            'positive_outcomes':model.get('wins',0),
+            'score':_sigmoid(score),'features':features,
+            'interpretation':'uncalibrated_shadow_score_not_entry_authorization'}
+
+
+def update_weighted_model(model,context,net_pnl_usd,trade_signature=None):
+    if not _finite(net_pnl_usd): raise ValueError('Finite confirmed trade P&L required for learning')
+    if not isinstance(context,dict) or not context:
+        return dict(model or new_weighted_model()),{'updated':False,'reason':'recorded entry context required'}
+    model=dict(model or new_weighted_model())
+    if model.get('version')!='online-logistic-v1':
+        raise ValueError('Unsupported shadow learning model version')
+    if trade_signature and model.get('last_trade_signature')==trade_signature:
+        return model,{'updated':False,'reason':'trade already learned'}
+    weights=dict(new_weighted_model()['weights'])
+    existing=model.get('weights',{})
+    for key in weights:
+        value=existing.get(key,0.)
+        if not _finite(value): raise ValueError('Invalid persisted shadow model weight')
+        weights[key]=max(-8.,min(8.,value))
+    features=model_features(context)
+    probability=_sigmoid(weights['bias']+sum(weights[name]*value for name,value in features.items()))
+    target=1. if net_pnl_usd>0 else 0.
+    wins=model.get('wins',0);losses=model.get('losses',0)
+    if type(wins) is not int or type(losses) is not int or wins<0 or losses<0:
+        raise ValueError('Invalid persisted shadow model outcome counts')
+    prior_samples=wins+losses
+    class_count=wins if target else losses
+    sample_weight=1. if prior_samples==0 else min(3.,prior_samples/(2*max(1,class_count)))
+    error=target-probability
+    weights['bias']=max(-8.,min(8.,weights['bias']+MODEL_LEARNING_RATE*sample_weight*error))
+    for name,value in features.items():
+        weights[name]=max(-8.,min(8.,weights[name]+MODEL_LEARNING_RATE*(sample_weight*error*value-MODEL_L2*weights[name])))
+    updated={'version':'online-logistic-v1','samples':model.get('samples',0)+1,
+        'wins':wins+int(target),'losses':losses+int(not target),'weights':weights,
+        'last_trade_signature':trade_signature or model.get('last_trade_signature'),
+        'wallet_stats':model.get('wallet_stats',{})}
+    return updated,{'updated':True,'target_net_positive':bool(target),
+        'class_weight':sample_weight,
+        'probability_before_update':probability,'prediction_after_update':weighted_prediction(updated,context)['score'],
+        'training_samples':updated['samples']}
+
+
+def decision_context(snapshot,rules,scorecard=None,signal=None,risk=None,entry_profile=None,weighted_model=None):
     fields=('mint','pool','observed_at','price_usd','market_kind','buy_volume_usd','sell_volume_usd','liquidity_usd',
             'buy_volume_window_seconds','buy_volume_coverage_pct')
     context={key:snapshot.get(key) for key in fields}
@@ -55,12 +176,14 @@ def decision_context(snapshot,rules,scorecard=None,signal=None,risk=None,entry_p
     context['flow_metrics']=_flow_metrics(snapshot)
     context['entry_profile']=entry_profile
     context['signal']={key:signal.get(key) for key in ('action','reason','metrics')} if isinstance(signal,dict) else None
+    context['followed_wallet_features']=_followed_entry_features(snapshot,weighted_model)
     if isinstance(risk,dict):
         context['onchain_risk']={key:risk.get(key) for key in
             ('passed','status','reasons','coverage','largest_sampled_owner_pct','top10_sampled_owners_pct',
              'busiest_buyer_share','busiest_slot_buy_share')}
     else:
         context['onchain_risk']=None
+    context['shadow_prediction']=weighted_prediction(weighted_model,context) if weighted_model else None
     context['limits']={key:getattr(rules,key) for key in (
         'position_fraction','take_profit_fraction','max_loss_fraction','max_position_usd',
         'take_profit_usd','max_loss_usd','slippage_per_side','drawdown_halt','min_buy_sell_ratio',
@@ -102,20 +225,49 @@ def paper_outcomes(path):
     try:
         for run, in db.execute('SELECT id FROM paper_runs ORDER BY created').fetchall():
             opened=None
-            for at,event_raw,snapshot_raw in db.execute('SELECT observed,event,snapshot FROM paper_events WHERE run_id=? ORDER BY sequence',(run,)):
+            for sequence,at,event_raw,snapshot_raw in db.execute('SELECT sequence,observed,event,snapshot FROM paper_events WHERE run_id=? ORDER BY sequence',(run,)):
                 event=json.loads(event_raw);snapshot=json.loads(snapshot_raw)
                 if event['action']=='paper_buy':
                     if opened: unmatched+=1
+                    context=dict(snapshot)
+                    context['flow_metrics']=_flow_metrics(snapshot)
+                    signal_metrics=event.get('signal_metrics')
+                    if not isinstance(signal_metrics,dict):
+                        signal_metrics={'pullback_fraction':event.get('pullback_fraction')}
+                    context['signal']={'metrics':signal_metrics}
                     opened={'source':'bot_paper','run_id':run,'mint':event['mint'],'entry_at':at,
-                            'entry_profile':event.get('entry_profile'),'entry_context':snapshot,'status':'open'}
+                            'entry_profile':event.get('entry_profile'),'entry_context':context,
+                            'entry_data_kind':event.get('data_kind','supplied_observation'),'status':'open'}
                 elif event['action']=='paper_sell':
                     if not opened or opened['mint']!=event['mint']: unmatched+=1;continue
-                    result.append({**opened,'exit_at':at,'net_pnl_usd':event['pnl_usd'],'exit_reason':event.get('reason'),
+                    result.append({**opened,'exit_at':at,'exit_signature':f'paper:{run}:{sequence}',
+                                   'net_pnl_usd':event['pnl_usd'],'exit_reason':event.get('reason'),
                                    'status':'closed','label_kind':'modeled_paper_pnl'})
                     opened=None
             if opened: unclosed.append(opened)
     finally: db.close()
     return result,unclosed,[],unmatched
+
+
+def train_followed_wallet_model(outcomes):
+    model=new_weighted_model()
+    scored=[]
+    wallet_stats={}
+    ordered=sorted(outcomes,key=lambda row:(row['exit_at'],row['wallet'],row['exit_signature']))
+    for outcome in ordered:
+        context=outcome['entry_context']
+        before=weighted_prediction(model,context)['score']
+        model,_=update_weighted_model(model,context,outcome['net_pnl_quote'],outcome['exit_signature'])
+        scored.append((before,outcome['net_pnl_quote']>0))
+        stats=wallet_stats.setdefault(outcome['wallet'],{'closed_trades':0,'wins':0})
+        stats['closed_trades']+=1
+        stats['wins']+=int(outcome['net_pnl_quote']>0)
+        model['wallet_stats']=dict(model['wallet_stats'],**{
+            outcome['wallet']:{**stats,'win_rate':stats['wins']/stats['closed_trades']}})
+    count=len(scored)
+    return model,{'entry_score_evaluation':{'trades':count,
+        'accuracy':sum((score>=.5)==won for score,won in scored)/count if count else None,
+        'brier_score':sum((score-int(won))**2 for score,won in scored)/count if count else None}}
 
 
 def _feedback_features(context):
@@ -155,7 +307,18 @@ def outcome_feedback(closed,minimum_review_samples=10):
     return result
 
 
-def report(live=None,paper=None):
+def adverse_live_cohorts(database,context,minimum_samples=10):
+    """Block only matching live-entry cohorts with enough confirmed negative outcomes."""
+    closed,_,_,_=live_outcomes(database)
+    live=[trade for trade in closed if trade.get('source')=='bot_live']
+    current=_feedback_features(context)
+    return [row for row in outcome_feedback(live,minimum_samples)
+        if row['review_status']=='review_negative_expectancy'
+        and row['band']!='unknown'
+        and current.get(row['feature'])==row['band']]
+
+
+def report(live=None,paper=None,followed_wallet_db=None,followed_wallets=()):
     closed=[];opened=[];failures=[];unmatched=0
     for source,path in [(live_outcomes,live),(paper_outcomes,paper)]:
         if path and Path(path).exists():
@@ -167,20 +330,44 @@ def report(live=None,paper=None):
         summaries.append({'source':source,'profile':profile,'trades':len(values),'net_pnl_usd':sum(values),
             'mean_net_pnl_usd':sum(values)/len(values),'wins':sum(v>0 for v in values),'losses':sum(v<0 for v in values),
             'worst_trade_usd':min(values)})
+    learned_models={}
+    if followed_wallet_db and Path(followed_wallet_db).exists():
+        from wallet_watch import followed_wallet_outcomes
+        external=followed_wallet_outcomes(followed_wallet_db,followed_wallets)
+        model,metrics=train_followed_wallet_model(external)
+        learned_models['followed_wallet_model']={'version':model['version'],
+            'training_samples':model['samples'],'positive_outcomes':model['wins'],
+            'negative_outcomes':model['losses'],'feature_weights':model['weights'],
+            'followed_wallets':sorted(set(row['wallet'] for row in external)),
+            'training_source':'configured_followed_wallets_only',
+            'pnl_basis':'receipt_reconstructed_quote_currency_flat_to_flat',
+            **metrics,'status':'insufficient_data_for_interpretation' if model['samples']<10 else 'shadow_only',
+            'trains_live_model':True,'automatically_changes_entries':False}
+    else:
+        learned_models['followed_wallet_model']={'version':'online-logistic-v1',
+            'training_samples':0,'positive_outcomes':0,'negative_outcomes':0,
+            'feature_weights':new_weighted_model()['weights'],
+            'followed_wallets':[],'training_source':'configured_followed_wallets_only',
+            'pnl_basis':'receipt_reconstructed_quote_currency_flat_to_flat',
+            'status':'no_followed_wallet_receipt_data','trains_live_model':True,
+            'automatically_changes_entries':False}
     return {'closed_bot_trades':len(closed),'open_or_unfinished_bot_trades':len(opened),'failed_live_orders':len(failures),
             'failed_live_network_cost_usd':sum(f.get('network_cost_usd',0) for f in failures),
             'live_realized_pnl_including_failed_orders_usd':sum(t['net_pnl_usd'] for t in closed if t['source']=='bot_live')-sum(f.get('network_cost_usd',0) for f in failures),
             'failed_orders':failures,'unmatched_receipts':unmatched,
             'by_source_and_profile':summaries,'closed_trades':closed,'open_trades':opened,
             'outcome_feedback':outcome_feedback(closed),
+            'weighted_learning':learned_models,
             'feedback_policy':{'minimum_review_samples':10,'live_and_paper_separated':True,
-                'automatic_entry_or_risk_changes':False},
+                'source_specific_outcome_cohorts':True,'bot_and_paper_outcomes_train_live_model':False,
+                'negative_live_cohorts_block_new_entries':True,
+                'automatic_risk_or_position_size_changes':False},
             'automatic_live_changes':False,'validated_model':False,
-            'limitations':'Descriptive decision/outcome data; paper and live labels are separate. No fresh holdout/prospective model validation yet. Manual receipts need independent cost/rent reconstruction before profit labels.'}
+            'limitations':'Bot and paper outcome reports do not train the live model. Followed-wallet labels require a complete forward-observed flat-to-flat receipt cycle. No prospective validation yet.'}
 
 
-def export_report(live,paper,output):
-    output=Path(output);data=report(live,paper)
+def export_report(live,paper,output,followed_wallet_db=None,followed_wallets=()):
+    output=Path(output);data=report(live,paper,followed_wallet_db,followed_wallets)
     output.parent.mkdir(parents=True,exist_ok=True)
     temp=output.with_suffix('.tmp');temp.write_text(json.dumps(data,indent=2,allow_nan=False)+'\n');temp.replace(output)
     return data
@@ -190,8 +377,13 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--live-db',type=Path,default=Path('state/meme_live/meme_live.sqlite'))
     parser.add_argument('--paper-db',type=Path,default=Path('state/paper_volume/paper.sqlite'))
+    parser.add_argument('--followed-wallet-db',type=Path,default=Path('state/wallet_watch/wallet_watch.sqlite'))
+    parser.add_argument('--watchlist',type=Path,default=Path('paper_watchlist.json'))
     parser.add_argument('--output',type=Path,default=Path('state/research/bot_outcomes.json'))
-    args=parser.parse_args();data=export_report(args.live_db,args.paper_db,args.output)
+    args=parser.parse_args()
+    from wallet_signals import load_watchlist
+    data=export_report(args.live_db,args.paper_db,args.output,args.followed_wallet_db,
+        load_watchlist(args.watchlist))
     print(json.dumps({k:v for k,v in data.items() if k not in ('closed_trades','open_trades','failed_orders')},indent=2))
 
 

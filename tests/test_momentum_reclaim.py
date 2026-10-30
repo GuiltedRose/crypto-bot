@@ -2,6 +2,7 @@ import copy
 import tempfile
 import unittest
 from dataclasses import replace
+from unittest.mock import patch
 from test_volume_candles import row,rules
 from test_meme_live import FakeAdapter
 from meme_dip import PaperDipTrader
@@ -11,7 +12,8 @@ from meme_profiles import assess_profiles
 
 
 def policy():
-    return replace(rules(),momentum_reclaim_enabled=True,trend_pullback_max_fraction=.5)
+    return replace(rules(),momentum_reclaim_enabled=True,trend_pullback_max_fraction=.5,
+                   min_buy_sell_ratio=1.0)
 
 
 def setup():
@@ -25,7 +27,8 @@ def setup():
 
 class ReclaimTests(unittest.TestCase):
     def test_confirmed_setup_buys_but_downtrend_does_not(self):
-        self.assertEqual(assess_volume_candles(setup(),1200,policy())['action'],'buy')
+        r=setup();r['buy_volume_usd']=6000;r['sell_volume_usd']=6000
+        self.assertEqual(assess_volume_candles(r,1200,policy())['action'],'buy')
         self.assertNotEqual(assess_volume_candles(row(),1200,policy())['action'],'buy')
     def test_no_rebound_breakdown_low_volume_and_chasing_wait(self):
         for field,value in [('close',1.15),('low',.99),('volume_usd',100)]:
@@ -39,12 +42,18 @@ class ReclaimTests(unittest.TestCase):
         r=setup();r['buy_volume_usd']=4999
         self.assertEqual(assess_volume_candles(r,1200,policy())['action'],'reject')
     def test_sell_dominance_and_missing_sell_volume_block_reclaim(self):
-        for sell in (6000,5500):
+        for sell in (6100,6500):
             r=setup();r['sell_volume_usd']=sell
             result=assess_volume_candles(r,1200,policy())
             self.assertEqual(result['action'],'watch',result)
             self.assertIn('hourly buy pressure',result['reason'])
+        self.assertEqual(assess_volume_candles(setup(),1200,policy())['action'],'buy')
         r=setup();r.pop('sell_volume_usd')
+        self.assertEqual(assess_volume_candles(r,1200,policy())['action'],'watch')
+    def test_partial_reclaim_volume_can_confirm_but_weak_volume_cannot(self):
+        r=setup();r['candle_history']['candles'][-1]['volume_usd']=150
+        self.assertEqual(assess_volume_candles(r,1200,policy())['action'],'buy')
+        r['candle_history']['candles'][-1]['volume_usd']=149
         self.assertEqual(assess_volume_candles(r,1200,policy())['action'],'watch')
     def test_adaptive_and_paper_share_setup(self):
         p=replace(policy(),entry_profile_mode='adaptive')
@@ -68,6 +77,21 @@ class ReclaimTests(unittest.TestCase):
                 engine.risk_assessor=type('GoodRisk',(),{'assess':lambda *args:{'passed':True}})()
                 self.assertEqual(engine.prepare(r,100,6.5,1200)['status'],'unsigned_simulation_passed')
             finally:store.close()
+
+    def test_confirmed_negative_context_feedback_vetoes_matching_live_entry(self):
+        with tempfile.TemporaryDirectory() as root:
+            configured=policy()
+            store=MemeLiveStore(root,'user',configured)
+            try:
+                engine=MemeLiveEngine({},'user',store,configured,adapter_factory=FakeAdapter)
+                with patch('meme_learning.adverse_live_cohorts',return_value=[
+                    {'feature':'buy_sell_ratio','band':'1.0_to_1.1','trades':10,'mean_net_pnl_usd':-.1}]):
+                    candidate=setup();candidate.pop('execution')
+                    result=engine.prepare(candidate,100,6.5,1200)
+                self.assertEqual(result['status'],'historical_loss_cohort_block')
+                self.assertEqual(len(result['feedback']),1)
+            finally:
+                store.close()
 
     def test_setup_survives_more_than_three_candles(self):
         r=setup();bars=r['candle_history']['candles']

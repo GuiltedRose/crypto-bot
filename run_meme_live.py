@@ -98,6 +98,7 @@ def wallet_equity(rpc,user,price,position,sources,rent_accounts=()):
 def tick(engine,sources,feed,wallets,mints,discover=True,progress=None):
     if progress: progress({'status':'checking_wallet_and_market'})
     if engine.store.state['pending']: return engine.recover()
+    engine.store.refresh_learning_model()
     price=valuation(sources)
     position=engine.store.state['position']
     # Resolve a held mint even if its old bonding curve has migrated. The
@@ -221,6 +222,7 @@ def main():
     from meme_profiles import selected
     base_rules=DipRules(**json.loads(args.rules.read_text()))
     rules=selected(base_rules,args.profile)
+    wallets=load_watchlist(args.watchlist)
     if rules.entry_style not in ('trend_pullback','volume_candles') or min(rules.position_cap(1),*rules.exit_limits(1))<=0:
         parser.error('Live meme profile requires a supported entry policy and explicit dollar limits')
     os.umask(0o077)
@@ -236,7 +238,9 @@ def main():
     directory=args.state_dir or Path('state/meme_live' if args.execute else 'state/meme_unsigned')
     if directory.resolve() in (Path('state').resolve(),Path('state/paper_memes').resolve()):
         parser.error('Use an isolated meme execution directory')
-    store=MemeLiveStore(directory,user,rules,adopt_rules=args.adopt_rules)
+    store=MemeLiveStore(directory,user,rules,adopt_rules=args.adopt_rules,
+        learning_wallet_db=args.wallet_source_dir/'wallet_watch.sqlite',
+        followed_wallets=wallets)
     try:
         # Bind mode as well as wallet/rules: never silently reuse unsigned state
         # (marks, simulated observations) as a funded live experiment.
@@ -269,7 +273,6 @@ def main():
         if args.reconcile_only:
             publish(engine.recover())
             return
-        wallets=load_watchlist(args.watchlist)
         try: ensure_worker(args.watchlist,args.wallet_source_dir,args.rpc)
         except (OSError,ValueError): pass
         feed=SharedWalletFeed(args.wallet_source_dir)

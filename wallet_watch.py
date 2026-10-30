@@ -15,6 +15,8 @@ SOL = 'So11111111111111111111111111111111111111112'
 USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 SPECS = json.loads(Path(__file__).with_name('pump_watch_specs.json').read_text())['programs']
 MAINNET = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
+SYSTEM_PROGRAM = '11111111111111111111111111111111'
+ASSOCIATED_TOKEN_PROGRAM = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL'
 
 
 def decode58(value):
@@ -26,7 +28,7 @@ def decode58(value):
     return bytes(len(value)-len(value.lstrip('1')))+n.to_bytes((n.bit_length()+7)//8, 'big')
 
 
-def classify_transaction(tx, wallet, signature, now):
+def classify_transaction(tx, wallet, signature, now, allow_historical=False):
     """Conservative parsed-RPC classifier; ambiguous transfers remain unclassified."""
     base = {'wallet': wallet, 'signature': signature, 'classification': 'unclassified',
             'signals': [], 'independent_human_verified': False, 'automatic_trade_approval': False}
@@ -35,7 +37,9 @@ def classify_transaction(tx, wallet, signature, now):
         if meta['err'] is not None or transaction['signatures'][0] != signature:
             return base
         observed = tx['blockTime']
-        if isinstance(observed, bool) or not isinstance(observed, (int, float)) or not 0 <= now-observed <= 300:
+        age=now-observed
+        if (isinstance(observed, bool) or not isinstance(observed, (int, float))
+                or age<0 or (not allow_historical and age>300)):
             return base
         base['observed_at'] = observed
         keys = transaction['message']['accountKeys']
@@ -58,7 +62,7 @@ def classify_transaction(tx, wallet, signature, now):
         instructions = list(transaction['message'].get('instructions', []))
         for inner in meta.get('innerInstructions') or []:
             instructions.extend(inner['instructions'])
-        matched = set()
+        matched = []
         for ix in instructions:
             program = ix.get('programId')
             if program not in SPECS or 'data' not in ix:
@@ -75,29 +79,143 @@ def classify_transaction(tx, wallet, signature, now):
                 if quote not in (SOL, USDC) or mint in (SOL, USDC):
                     continue
                 action = 'buy' if spec['name'].startswith('buy') else 'sell'
-                matched.add((mint, quote, action))
+                matched.append((mint, quote, action))
         # Reject routed/multi-trade ambiguity rather than crediting a transfer.
         if len(matched) != 1:
             return base
-        mint, quote, action = matched.pop()
+        mint, quote, action = matched[0]
         delta = deltas.get(mint, 0)
         quote_delta = deltas.get(quote, 0)
         if quote == SOL:
             quote_delta += meta['postBalances'][user_index]-meta['preBalances'][user_index]
-            # Remove this signer's network fee from the native delta.
-            if user_index == 0:
-                quote_delta += meta['fee']
         if action == 'buy' and not (delta > 0 and quote_delta < 0):
             return base
         if action == 'sell' and not (delta < 0 and quote_delta > 0):
             return base
+        quote_decimals=9 if quote==SOL else 6
         base.update(classification='pump_trade_candidate', signals=[{
             'mint': mint, 'action': action, 'token_delta_units': delta, 'decimals': decimals[mint],
             'quote_mint': quote, 'quote_delta_units': quote_delta,
+            'quote_decimals':quote_decimals,'quote_delta_amount':quote_delta/(10**quote_decimals),
             'quote_delta_note': 'net wallet change; may include rent or other transaction movements'}])
     except (KeyError, TypeError, ValueError, IndexError, StopIteration, OverflowError):
         pass
     return base
+
+
+def _owner_mint_balances(tx,wallet):
+    balances={}
+    meta=tx.get('meta',{})
+    for field in ('preTokenBalances','postTokenBalances'):
+        values={}
+        for row in meta.get(field,[]):
+            if row.get('owner')!=wallet: continue
+            mint=row.get('mint')
+            amount=row.get('uiTokenAmount',{}).get('amount')
+            if not isinstance(mint,str) or not isinstance(amount,str): continue
+            try: values[mint]=values.get(mint,0)+int(amount)
+            except ValueError: continue
+        balances[field]=values
+    return balances
+
+
+def _verified_followed_swap(tx,wallet,event):
+    if event.get('classification')!='pump_trade_candidate' or len(event.get('signals',[]))!=1:
+        return None
+    signal=event['signals'][0]
+    instructions=tx.get('transaction',{}).get('message',{}).get('instructions',[])
+    for instruction in instructions:
+        if instruction.get('programId') not in (SYSTEM_PROGRAM,ASSOCIATED_TOKEN_PROGRAM):
+            continue
+        accounts=instruction.get('accounts',[])
+        if wallet in accounts:
+            return None
+    for instruction in tx.get('transaction',{}).get('message',{}).get('instructions',[]):
+        program=instruction.get('programId')
+        if program in SPECS or program=='ComputeBudget111111111111111111111111111111':
+            continue
+        if wallet in instruction.get('accounts',[]):
+            return None
+    balances=_owner_mint_balances(tx,wallet)
+    pre,post=balances['preTokenBalances'],balances['postTokenBalances']
+    mint=signal['mint']
+    pre_units=pre.get(mint)
+    post_units=post.get(mint)
+    if pre_units is None or post_units is None or post_units-pre_units!=signal['token_delta_units']:
+        return None
+    quote=signal['quote_mint']
+    if quote!=SOL:
+        keys=tx.get('transaction',{}).get('message',{}).get('accountKeys',[])
+        if keys and isinstance(keys[0],dict) and keys[0].get('pubkey')==wallet:
+            return None
+    allowed={mint,quote}
+    if any(pre.get(key,0)!=post.get(key,0) for key in set(pre)|set(post) if key not in allowed):
+        return None
+    if quote!=SOL and post.get(quote,0)-pre.get(quote,0)!=signal['quote_delta_units']:
+        return None
+    amount=signal.get('quote_delta_amount')
+    if type(amount) not in (int,float):
+        return None
+    return dict(signal,pre_token_units=pre_units,post_token_units=post_units,
+                quote_delta_amount=amount)
+
+
+def followed_wallet_outcomes(database,followed_wallets):
+    """Reconstruct forward-observed, flat-to-flat outcomes from followed-wallet receipts."""
+    followed=set(followed_wallets)
+    if not followed or not Path(database).exists(): return []
+    db=sqlite3.connect('file:'+str(Path(database).resolve())+'?mode=ro',uri=True)
+    try:
+        rows=db.execute('SELECT id,wallet,signature,observed,kind,event,raw FROM followed_wallet_events ORDER BY observed,id').fetchall()
+    finally:
+        db.close()
+    cycles={};prior={};outcomes=[]
+    for _,wallet,signature,observed,kind,event_raw,raw in rows:
+        if wallet not in followed: continue
+        if kind=='gap':
+            cycles={key:value for key,value in cycles.items() if key[0]!=wallet}
+            continue
+        tx=json.loads(raw);event=json.loads(event_raw)
+        balances=_owner_mint_balances(tx,wallet)
+        pre,post=balances['preTokenBalances'],balances['postTokenBalances']
+        signal=_verified_followed_swap(tx,wallet,event) if kind=='trade' else None
+        matched_mint=signal.get('mint') if signal else None
+        for key in list(cycles):
+            if key[0]!=wallet: continue
+            mint=key[1]
+            if pre.get(mint,0)!=post.get(mint,0) and mint!=matched_mint:
+                del cycles[key]
+        if signal is None: continue
+        mint=signal['mint'];key=(wallet,mint)
+        if key not in cycles:
+            if signal['action']!='buy' or signal['pre_token_units']!=0: continue
+            count,wins=prior.get(wallet,(0,0))
+            cycles[key]={'quote_mint':signal['quote_mint'],'quote_decimals':signal['quote_decimals'],
+                'units':0,'net_quote_units':0,'entry_at':observed,'entry_signature':signature,
+                'entry_context':{'followed_wallet_features':{
+                    'buy_size_quote':-signal['quote_delta_amount'],
+                    'prior_win_rate':wins/count if count else None,
+                    'prior_closed_trades':count,'activity_count':1},
+                    'wallet_origin':'configured_followed_wallet',
+                    'label_basis':'receipt_reconstructed_flat_to_flat_quote_pnl'}}
+        cycle=cycles[key]
+        if cycle['quote_mint']!=signal['quote_mint'] or cycle['units']!=signal['pre_token_units']:
+            del cycles[key]
+            continue
+        cycle['units']=signal['post_token_units']
+        cycle['net_quote_units']+=signal['quote_delta_units']
+        if cycle['units']==0 and signal['action']=='sell':
+            net_quote=cycle['net_quote_units']/(10**cycle['quote_decimals'])
+            result={'source':'followed_wallet','wallet':wallet,'mint':mint,
+                'entry_at':cycle['entry_at'],'exit_at':observed,
+                'entry_signature':cycle['entry_signature'],'exit_signature':signature,
+                'quote_mint':cycle['quote_mint'],'net_pnl_quote':net_quote,
+                'entry_context':cycle['entry_context'],'label_kind':'receipt_reconstructed_flat_to_flat'}
+            outcomes.append(result)
+            count,wins=prior.get(wallet,(0,0))
+            prior[wallet]=(count+1,wins+int(cycle['net_quote_units']>0))
+            del cycles[key]
+    return outcomes
 
 
 class PublicRpcError(ValueError):
@@ -141,8 +259,56 @@ class WalletWatcher:
         self.db.execute('CREATE TABLE IF NOT EXISTS watch_events(wallet TEXT,signature TEXT,observed REAL,event TEXT,PRIMARY KEY(wallet,signature))')
         self.db.execute('CREATE TABLE IF NOT EXISTS watch_meta(key TEXT PRIMARY KEY,value TEXT)')
         self.db.execute('CREATE TABLE IF NOT EXISTS watch_checks(wallet TEXT PRIMARY KEY,checked REAL,status TEXT)')
+        self.db.execute('''CREATE TABLE IF NOT EXISTS followed_wallet_state(
+            wallet TEXT PRIMARY KEY,cursor TEXT NOT NULL)''')
+        self.db.execute('''CREATE TABLE IF NOT EXISTS followed_wallet_events(
+            id INTEGER PRIMARY KEY,wallet TEXT NOT NULL,signature TEXT NOT NULL,
+            observed REAL NOT NULL,kind TEXT NOT NULL,event TEXT NOT NULL,raw TEXT NOT NULL,
+            UNIQUE(wallet,signature))''')
         self.db.commit()
         self.rpc, self.limit, self.checked_network = rpc or PublicRpc(), transactions_per_poll, False
+        self.followed_wallets=set()
+
+    def set_followed_wallets(self,wallets):
+        self.followed_wallets=set(wallets)
+
+    def _record_followed_signatures(self,wallet,records,now):
+        if not records: return
+        newest=records[0]['signature']
+        row=self.db.execute('SELECT cursor FROM followed_wallet_state WHERE wallet=?',(wallet,)).fetchone()
+        if row is None:
+            with self.db:
+                self.db.execute('INSERT INTO followed_wallet_state VALUES(?,?)',(wallet,newest))
+            return
+        cursor=row[0]
+        indices=[i for i,item in enumerate(records) if item.get('signature')==cursor]
+        if not indices:
+            with self.db:
+                marker='gap:'+str(records[0].get('blockTime',now))+':'+newest
+                self.db.execute('INSERT OR IGNORE INTO followed_wallet_events(wallet,signature,observed,kind,event,raw) VALUES(?,?,?,?,?,?)',
+                    (wallet,marker,records[0].get('blockTime',now),'gap','{}','{}'))
+                self.db.execute('UPDATE followed_wallet_state SET cursor=? WHERE wallet=?',(newest,wallet))
+            return
+        fresh=records[:indices[0]]
+        if len(fresh)>self.limit:
+            with self.db:
+                marker='gap:'+str(records[0].get('blockTime',now))+':'+newest
+                self.db.execute('INSERT OR IGNORE INTO followed_wallet_events(wallet,signature,observed,kind,event,raw) VALUES(?,?,?,?,?,?)',
+                    (wallet,marker,records[0].get('blockTime',now),'gap','{}','{}'))
+                self.db.execute('UPDATE followed_wallet_state SET cursor=? WHERE wallet=?',(newest,wallet))
+            return
+        captured=[]
+        for item in reversed(fresh):
+            signature=item.get('signature')
+            if not signature: return
+            tx=self.rpc.call('getTransaction',[signature,{'encoding':'jsonParsed','commitment':'confirmed','maxSupportedTransactionVersion':1}])
+            if tx is None: return
+            event=classify_transaction(tx,wallet,signature,now,allow_historical=True)
+            captured.append((wallet,signature,item.get('blockTime',now),
+                'trade' if event.get('signals') else 'other',json.dumps(event),json.dumps(tx)))
+        with self.db:
+            self.db.executemany('INSERT OR IGNORE INTO followed_wallet_events(wallet,signature,observed,kind,event,raw) VALUES(?,?,?,?,?,?)',captured)
+            self.db.execute('UPDATE followed_wallet_state SET cursor=? WHERE wallet=?',(newest,wallet))
 
     def poll(self, wallets, now=None):
         now = int(time.time()) if now is None else now
@@ -160,6 +326,8 @@ class WalletWatcher:
         for wallet in selected:
             try:
                 records = self.rpc.call('getSignaturesForAddress', [wallet, {'limit': 20, 'commitment': 'confirmed'}])
+                if wallet in self.followed_wallets:
+                    self._record_followed_signatures(wallet,records,now)
                 pending = [row for row in records if row.get('err') is None and type(row.get('blockTime')) is int
                            and 0 <= now-row['blockTime'] <= 300 and not self.db.execute(
                                'SELECT 1 FROM watch_events WHERE wallet=? AND signature=?', (wallet, row['signature'])).fetchone()]

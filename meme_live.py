@@ -24,8 +24,11 @@ def positive(value):
 
 
 class MemeLiveStore:
-    def __init__(self,directory,user,rules,adopt_rules=False):
+    def __init__(self,directory,user,rules,adopt_rules=False,learning_wallet_db=None,
+                 followed_wallets=()):
         self.directory=Path(directory);self.directory.mkdir(parents=True,exist_ok=True)
+        self.learning_wallet_db=Path(learning_wallet_db) if learning_wallet_db else None
+        self.followed_wallets=tuple(dict.fromkeys(followed_wallets))
         self.lock=(self.directory/'runner.lock').open('a')
         try: fcntl.flock(self.lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except OSError:
@@ -60,6 +63,22 @@ class MemeLiveStore:
         else:
             self.state=dict(binding=binding,position=None,pending=None,peak_equity=None,halted=False,realized_pnl_usd=0)
             self.save('initialized',{})
+        self.refresh_learning_model(record_event='shadow_learning_initialized')
+
+    def refresh_learning_model(self,record_event='shadow_learning_refreshed'):
+        from meme_learning import new_weighted_model,train_followed_wallet_model
+        from wallet_watch import followed_wallet_outcomes
+        outcomes=followed_wallet_outcomes(self.learning_wallet_db,self.followed_wallets) if self.learning_wallet_db else []
+        model,_=train_followed_wallet_model(outcomes)
+        if not outcomes: model=new_weighted_model()
+        if self.state.get('learning_model_live')!=model:
+            self.state['learning_model_live']=model
+            self.save(record_event,{'version':model['version'],
+                'training_samples':model['samples'],
+                'training_source':'configured_followed_wallets_only',
+                'followed_wallets':len(self.followed_wallets),
+                'positive_outcomes':model['wins'],'negative_outcomes':model['losses']})
+        return self.state['learning_model_live']
 
     def save(self,kind,body):
         with self.db:
@@ -237,13 +256,17 @@ class MemeLiveEngine:
             s['position']=dict(entry_profile=p.get('entry_profile'),mint=p['mint'],pool=p['pool'],kind=p['kind'],units=fill['base_delta'],
                 opened_at=tx.get('blockTime') or time.time(),cost_usd=-fill['net_cash_lamports']/1e9*p['sol_price_usd'],
                 base_account=p['base_account'],quote_account=p['quote_account'],entry_signature=row[0],
+                entry_context=p.get('entry_context'),
                 take_profit_usd=p.get('take_profit_usd',self.rules.take_profit_usd),max_loss_usd=p.get('max_loss_usd',self.rules.max_loss_usd))
             with self.store.db:
                 self.store.db.execute('INSERT OR REPLACE INTO bars VALUES(?,?,?)',(p['mint'],p['pool'],p['bar']))
         else:
             if -fill['base_delta']!=p['input_units'] or fill['quote_delta']+fill['native_delta']+fill['fee_lamports']+fill['own_account_rent_delta']<p['minimum']:
                 raise ValueError('Confirmed sell violates intent; manual reconciliation required')
-            pnl=fill['net_cash_lamports']/1e9*p['sol_price_usd']-s['position']['cost_usd']
+            position=s['position']
+            pnl=fill['net_cash_lamports']/1e9*p['sol_price_usd']-position['cost_usd']
+            fill['learning_update']={'updated':False,
+                'reason':'live bot outcomes are diagnostic; model trains only on followed-wallet outcomes'}
             s['realized_pnl_usd']+=pnl;s['position']=None;fill['pnl_usd']=pnl
         s['rent_accounts']=sorted(set(s.get('rent_accounts',[])+[p['base_account'],p['quote_account']]))
         s['pending']=None
@@ -294,6 +317,14 @@ class MemeLiveEngine:
                 signal=assess_volume_candles(snapshot,now,entry_rules)
             else: signal=assess_trend_pullback(snapshot,now,entry_rules)
             if signal['action']!='buy': return {'status':'watch','signal':signal,'scorecard':assessment}
+            from meme_learning import adverse_live_cohorts,decision_context
+            context_record=decision_context(snapshot,entry_rules,assessment,signal,
+                entry_profile=profile_name)
+            adverse=adverse_live_cohorts(self.store.directory/'meme_live.sqlite',context_record)
+            if adverse:
+                return {'status':'historical_loss_cohort_block',
+                        'reason':'Confirmed live outcomes show negative expectancy in this market context',
+                        'feedback':adverse,'signal':signal}
             bar=int(snapshot['candle_history']['candles'][-1]['timestamp'])
             used=self.store.db.execute('SELECT bar FROM bars WHERE mint=? AND pool=?',(snapshot['mint'],snapshot['pool'])).fetchone()
             if used and used[0]>=bar: return {'status':'already_entered_on_completed_candle'}
@@ -349,7 +380,8 @@ class MemeLiveEngine:
             if round_trip+setup>=loss_limit: return {'status':'estimated_costs_exceed_loss_budget'}
         from meme_learning import decision_context
         context_record=decision_context(snapshot,self.rules,assessment if side=='buy' else None,
-            signal if side=='buy' else None,risk_report,profile_name)
+            signal if side=='buy' else None,risk_report,profile_name,
+            self.store.state.get('learning_model_live') if side=='buy' else None)
         intent=dict(id=str(uuid.uuid4()),side=side,mint=snapshot['mint'],pool=snapshot['pool'],kind=snapshot['market_kind'],
             take_profit_usd=profit_target,max_loss_usd=loss_limit,entry_context=context_record,onchain_risk=risk_report,entry_profile=profile_name,input_units=units,minimum=context['min_output'],sol_price_usd=sol_price,bar=bar,reason=reason,
             base_account=str(market['base_user']),quote_account=str(market['quote_user']),simulation=simulated,

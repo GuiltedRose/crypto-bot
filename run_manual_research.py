@@ -21,6 +21,8 @@ def main():
     parser.add_argument('--rpc',default='https://api.mainnet-beta.solana.com')
     parser.add_argument('--orders-db',type=Path,default=Path('state/meme_live/orders.sqlite'))
     parser.add_argument('--paper-db',type=Path,default=Path('state/paper_volume/paper.sqlite'))
+    parser.add_argument('--wallet-source-dir',type=Path,default=Path('state/wallet_watch'))
+    parser.add_argument('--watchlist',type=Path,default=Path('paper_watchlist.json'))
     parser.add_argument('--loop',action='store_true')
     args=parser.parse_args();os.umask(0o077)
     wallet=args.wallet or json.loads(Path('state/wallet_observation.json').read_text())['wallet']
@@ -29,8 +31,11 @@ def main():
     with (args.state_dir/'collector.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         from meme_learning import export_report
+        from wallet_signals import load_watchlist
         def update_bot_research():
-            return export_report(args.orders_db.with_name('meme_live.sqlite'),args.paper_db,Path('state/research/bot_outcomes.json'))
+            return export_report(args.orders_db.with_name('meme_live.sqlite'),args.paper_db,
+                Path('state/research/bot_outcomes.json'),
+                args.wallet_source_dir/'wallet_watch.sqlite',load_watchlist(args.watchlist))
         rpc=PublicRpc(args.rpc)
         while True:
             update_bot_research()

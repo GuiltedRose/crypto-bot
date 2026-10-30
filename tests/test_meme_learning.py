@@ -1,7 +1,8 @@
 import tempfile
 import unittest
 from pathlib import Path
-from meme_learning import decision_context,outcome_feedback,report
+from meme_learning import (adverse_live_cohorts,decision_context,new_weighted_model,
+    outcome_feedback,report,train_followed_wallet_model,update_weighted_model,weighted_prediction)
 from meme_live import MemeLiveStore
 from meme_dip import DipRules
 from test_trend_pullback import snapshot
@@ -20,6 +21,19 @@ class BotLearningTests(unittest.TestCase):
         self.assertEqual(context['flow_metrics']['buy_sell_ratio'],2.5)
         self.assertEqual(context['signal']['action'],'buy')
         self.assertNotIn('wallet_secret',context['onchain_risk'])
+    def test_live_entry_features_use_followed_buy_receipts_only(self):
+        row=snapshot()
+        row['research_context']={'wallet_signals':[{'observations':[
+            {'wallet':'followed','wallet_origin':'pinned','quote_delta_amount':-.2},
+            {'wallet':'leaderboard','wallet_origin':'leaderboard','quote_delta_amount':-.8}]}]}
+        model=new_weighted_model()
+        model['wallet_stats']={'followed':{'closed_trades':4,'wins':3,'win_rate':.75},
+            'leaderboard':{'closed_trades':9,'wins':9,'win_rate':1.}}
+        context=decision_context(row,DipRules(),weighted_model=model)
+        self.assertEqual(context['followed_wallet_features']['activity_count'],1)
+        self.assertEqual(context['followed_wallet_features']['buy_size_quote'],.2)
+        self.assertEqual(context['followed_wallet_features']['prior_win_rate'],.75)
+        self.assertNotIn('research_context',context)
     def test_own_confirmed_orders_form_decision_outcome_pairs_and_failures_remain_costs(self):
         with tempfile.TemporaryDirectory() as root:
             store=MemeLiveStore(root,'user',DipRules())
@@ -31,7 +45,13 @@ class BotLearningTests(unittest.TestCase):
             store.save('confirmed_buy',{'mint':'coin','signature':'entry','fee_lamports':5000})
             store.save('reserved',{'id':'sell','side':'sell','mint':'coin','entry_profile':'aggressive','reason':'target'})
             store.save('confirmed_sell',{'mint':'coin','signature':'exit','pnl_usd':1.,'fee_lamports':5000})
-            store.save('transaction_failed',{'id':'failure','network_cost_usd':.01});store.close()
+            store.save('transaction_failed',{'id':'failure','network_cost_usd':.01})
+            store.state.pop('learning_model_live')
+            store.save('legacy_state_without_learner',{})
+            store.close()
+            migrated=MemeLiveStore(root,'user',DipRules())
+            self.assertEqual(migrated.state['learning_model_live']['samples'],0)
+            migrated.close()
             data=report(Path(root)/'meme_live.sqlite')
             self.assertEqual(data['closed_bot_trades'],1)
             self.assertEqual(data['closed_trades'][0]['entry_context'],ctx)
@@ -41,6 +61,7 @@ class BotLearningTests(unittest.TestCase):
             feedback={(row['feature'],row['band'],row['review_status']) for row in data['outcome_feedback']}
             self.assertIn(('buy_sell_ratio','at_least_1.1','insufficient_sample'),feedback)
             self.assertTrue(data['feedback_policy']['live_and_paper_separated'])
+            self.assertEqual(data['weighted_learning']['followed_wallet_model']['training_samples'],0)
     def test_open_position_and_unmatched_sale_are_not_fabricated_wins(self):
         with tempfile.TemporaryDirectory() as root:
             store=MemeLiveStore(root,'user',DipRules())
@@ -60,3 +81,49 @@ class BotLearningTests(unittest.TestCase):
         self.assertEqual(ratio['review_status'],'review_negative_expectancy')
         self.assertEqual(ratio['trades'],10)
         self.assertTrue(all(row['source']=='bot_live' for row in feedback))
+
+    def test_weighted_learning_updates_bounded_features_and_skips_duplicate_or_missing_labels(self):
+        context={'flow_metrics':{'buy_sell_ratio':1.5,'hourly_turnover_to_liquidity':2,
+            'max_completed_candle_range_fraction':.08},
+            'signal':{'metrics':{'runup_gain_fraction':.1,'pullback_fraction':.1,
+                'reclaim_to_pullback_volume_ratio':1.2}}}
+        model=new_weighted_model()
+        model,win=update_weighted_model(model,context,.2,'exit-1')
+        self.assertTrue(win['updated']);self.assertEqual(win['class_weight'],1)
+        self.assertGreater(weighted_prediction(model,context)['score'],.5)
+        duplicate,skipped=update_weighted_model(model,context,-.2,'exit-1')
+        self.assertFalse(skipped['updated']);self.assertEqual(duplicate['samples'],1)
+        missing,skipped=update_weighted_model(model,{},-.2,'exit-2')
+        self.assertFalse(skipped['updated']);self.assertEqual(missing['samples'],1)
+        model,loss=update_weighted_model(model,context,-.2,'exit-2')
+        self.assertTrue(loss['updated']);self.assertEqual(model['losses'],1)
+        self.assertTrue(all(-8<=weight<=8 for weight in model['weights'].values()))
+
+    def test_only_followed_wallet_outcomes_train_the_live_model(self):
+        context={'followed_wallet_features':{'buy_size_quote':.2,'prior_win_rate':.6}}
+        outcomes=[{'wallet':'followed-a','mint':'coin','entry_context':context,
+            'exit_at':2,'exit_signature':'sale-a','net_pnl_quote':.1},
+            {'wallet':'followed-b','mint':'coin','entry_context':context,
+            'exit_at':3,'exit_signature':'sale-b','net_pnl_quote':-.05}]
+        model,_=train_followed_wallet_model(outcomes)
+        self.assertEqual((model['samples'],model['wins'],model['losses']),(2,1,1))
+        self.assertIn('followed_wallet_buy_size',model['weights'])
+        self.assertIn('followed_wallet_prior_win_rate',model['weights'])
+
+    def test_confirmed_live_negative_cohort_blocks_only_after_minimum_sample(self):
+        with tempfile.TemporaryDirectory() as root:
+            store=MemeLiveStore(root,'user',DipRules())
+            context={'observed_at':1000,'price_usd':.1,'buy_volume_usd':900,
+                     'sell_volume_usd':1000,'flow_metrics':{'buy_sell_ratio':.9,
+                     'hourly_turnover_to_liquidity':2,'max_completed_candle_range_fraction':.08}}
+            for index in range(10):
+                mint='coin'+str(index)
+                store.save('reserved',{'id':'buy'+str(index),'side':'buy','mint':mint,'entry_context':context})
+                store.save('confirmed_buy',{'mint':mint,'signature':'entry'+str(index)})
+                store.save('reserved',{'id':'sell'+str(index),'side':'sell','mint':mint})
+                store.save('confirmed_sell',{'mint':mint,'signature':'exit'+str(index),'pnl_usd':-.1})
+            candidate=dict(context,mint='newcoin',pool='newpool')
+            self.assertEqual(len(adverse_live_cohorts(Path(root)/'meme_live.sqlite',candidate)),3)
+            self.assertEqual(adverse_live_cohorts(Path(root)/'meme_live.sqlite',candidate)[0]['trades'],10)
+            self.assertTrue(all(row['source']=='bot_live' for row in report(Path(root)/'meme_live.sqlite')['outcome_feedback']))
+            store.close()

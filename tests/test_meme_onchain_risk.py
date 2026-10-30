@@ -17,12 +17,15 @@ class RiskTests(unittest.TestCase):
             self.keys.append(str(Pubkey.new_unique()));self.accounts.append(token(rpc.mint,Pubkey.new_unique(),10))
         self.transactions={f'sig{i}':{'slot':i,'transaction':{'message':{'accountKeys':[{'pubkey':str(Pubkey.new_unique()),'signer':True}]}}} for i in range(3)}
         self.missing=False
+        self.transaction_calls=[]
         test=self
         class RPC:
             def call(self,method,params):
                 if method=='getTokenLargestAccounts': return {'value':[{'address':k} for k in test.keys]}
                 if method=='getSignaturesForAddress': return [{'signature':s,'blockTime':1000,'err':None} for s in test.transactions]
-                if method=='getTransaction': return None if test.missing else test.transactions[params[0]]
+                if method=='getTransaction':
+                    test.transaction_calls.append(params[0])
+                    return None if test.missing else test.transactions[params[0]]
                 raise AssertionError(method)
         class Adapter:
             mint=rpc.mint;pool=rpc.pool
@@ -50,6 +53,26 @@ class RiskTests(unittest.TestCase):
         self.transactions['sig3']['transaction']['message']['accountKeys'][0]['pubkey']=str(Pubkey.new_unique())
         for tx in self.transactions.values(): tx['slot']=1
         report=self.assess();self.assertFalse(report['passed']);self.assertTrue(any('slot' in r for r in report['reasons']))
+    def test_risk_sample_stops_after_four_classified_buys(self):
+        for i in range(3,8):
+            tx=copy.deepcopy(self.transactions['sig0'])
+            tx['transaction']['message']['accountKeys'][0]['pubkey']=str(Pubkey.new_unique())
+            tx['slot']=i
+            self.transactions[f'sig{i}']=tx
+        report=self.assess()
+        self.assertTrue(report['passed'],report)
+        self.assertEqual(report['sampled_buys'],4)
+        self.assertEqual(len(self.transaction_calls),4)
+    def test_four_trade_sample_still_rejects_repeated_wallet_concentration(self):
+        wallet=str(Pubkey.new_unique())
+        for i in range(3):
+            self.transactions[f'sig{i}']['transaction']['message']['accountKeys'][0]['pubkey']=wallet
+        tx=copy.deepcopy(self.transactions['sig0'])
+        tx['transaction']['message']['accountKeys'][0]['pubkey']=str(Pubkey.new_unique())
+        self.transactions['sig3']=tx
+        report=self.assess()
+        self.assertFalse(report['passed'],report)
+        self.assertIn('one wallet dominates the recent buy sample',report['reasons'])
     def test_bad_mint_identity_fails_closed(self):
         self.accounts[1]=token(Pubkey.new_unique(),Pubkey.new_unique(),10)
         self.assertEqual(self.assess()['status'],'unavailable')

@@ -1,10 +1,10 @@
 # Solana spot trading bot
 
 Active entry correction: `momentum_reclaim_enabled: true` requires an upward
-impulse, a 2–50% pullback, and a completed bullish reclaim above the pullback
-candle high with renewed candle volume. One-hour buy volume must be at least
-1.1 times reported sell volume; missing sell-volume evidence or weaker buying
-remains WATCH. Broken lows, missing intervals and chased quotes remain WATCH.
+impulse of at least 3%, a 1–50% pullback, and a completed bullish reclaim above
+the pullback candle high with at least 75% of its volume. One-hour buy volume
+must meet or exceed reported sell volume; missing sell-volume evidence or net
+selling remains WATCH. Broken lows, missing intervals and chased quotes remain WATCH.
 Two consecutive confirmed net losses pause new entries for one hour; open
 position exits remain active.
 Live entries also require the bounded on-chain concentration/activity check;
@@ -22,7 +22,7 @@ Restart with `--adopt-rules` when flat to adopt changed live rules. Older dollar
 examples below describe the previous configuration.
 
 Adaptive Current/Moderate/Aggressive response profiles share one entry policy:
-at least **$5,000 hourly buy volume**, buy volume at least **1.1x sell volume**,
+at least **$5,000 hourly buy volume**, buy volume at least equal to sell volume,
 and **3 completed
 one-minute candles**, with **$1.78 maximum input**, **$1 net TP** and **$0.20 net
 SL triggers** unchanged. The live drawdown failsafe now tracks bot P&L only,
@@ -43,8 +43,8 @@ The meme execution runner is `run_meme_live.py`: Pump momentum/pullback/reclaim
 signals, locally built Pump/PumpSwap swaps, unsigned simulation by default, and
 an explicit user-operated signed mode. See
 [setup, limits and execution scope](MEME_TRADER.md#current-meme-execution-runner).
-The configured policy requires $5,000 hourly buy volume, buy volume at least
-1.1x sell volume, completed candles, a volume-backed reclaim and a bounded
+The configured policy requires $5,000 hourly buy volume, at least as much buy
+as sell volume, completed candles, a volume-backed reclaim and a bounded
 on-chain concentration/activity check.
 Position and exit triggers are capped by the configured $1.78 maximum input,
 $1 net take-profit and $0.20 net-loss trigger at the example bankroll; the
@@ -53,8 +53,13 @@ The on-chain check cannot verify human buyers, full bundle safety or absence of
 manipulation. Earlier live outcomes predate the current reclaim policy, so its
 profitability has not been established.
 The outcome report records entry flow, candle-range, turnover/liquidity and
-sampled on-chain context; ten outcomes per cohort are required before a
-negative cohort is flagged for review. This does not auto-optimize the strategy.
+sampled on-chain context; after ten confirmed live outcomes, a negative cohort
+blocks new entries in matching contexts. Paper outcomes do not alter live
+decisions, and thresholds/stakes are not auto-optimized. A CPU-only online
+logistic learner trains only on contiguous receipt-reconstructed outcomes from
+the configured followed-wallet list; its uncalibrated score is shadow-only and
+never authorizes or sizes trades. Small samples are not validated evidence of profitability; see
+[learning and outcome limits](MEME_TRADER.md#the-bot-also-researches-its-own-orders).
 
 The following sections also describe the separate legacy runner and earlier
 paper work. They do not change the new runner's selected rules.

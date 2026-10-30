@@ -21,6 +21,7 @@ class DipRules:
     trend_min_gain_fraction: float = .05
     trend_pullback_min_fraction: float = .02
     trend_pullback_max_fraction: float = .15
+    reclaim_volume_fraction: float = .75
     min_buy_sell_ratio: float = 1.1
     social_min_views: int = 100
     max_liquidity_allocation_fraction: float = .0005
@@ -71,6 +72,8 @@ class DipRules:
             raise ValueError('Unknown paper entry style')
         if not 0 < self.trend_pullback_min_fraction < self.trend_pullback_max_fraction < 1 or self.max_holding_seconds<=0 or not 0<self.max_liquidity_allocation_fraction<1:
             raise ValueError('Invalid trend entry settings')
+        if not 0 < self.reclaim_volume_fraction <= 1:
+            raise ValueError('Invalid reclaim volume confirmation fraction')
         for key,value in asdict(self).items():
             if key not in ('evidence_mode','entry_style','entry_profile_mode','drawdown_bankroll_basis','momentum_reclaim_enabled'):
                 number(value, 0)
@@ -331,6 +334,7 @@ class PaperDipTrader:
             # A recovery must be observed again after an evidence outage.
             self.armed.pop(key, None)
             return {'action': 'reject', 'reasons': reasons}
+        signal_metrics={}
         if r.entry_style in ('trend_pullback','volume_candles'):
             if r.entry_style=='volume_candles':
                 from volume_candles import assess_volume_candles
@@ -340,6 +344,7 @@ class PaperDipTrader:
                 setup=assess_trend_pullback(snapshot,now,r)
             if setup['action']!='buy':
                 return setup
+            signal_metrics=setup.get('metrics',{})
             signal_bar=snapshot['candle_history']['candles'][-1]['timestamp']
             if self.last_entry_bars.get(key)==signal_bar:
                 return {'action':'watch','reason':'already entered on this completed candle'}
@@ -421,5 +426,6 @@ class PaperDipTrader:
             self.last_entry_bars[key]=signal_bar
         return {'action': 'paper_buy', 'mint': mint, 'budget_usd': budget,
                 'pullback_fraction': 1-reference_price/ath,
+                'signal_metrics':signal_metrics,
                 'entry_style':r.entry_style,'evidence_mode':r.evidence_mode, 'safety_qualified':r.evidence_mode=='strict',
                 'pullback_measure': 'recent_price_peak' if r.entry_style=='trend_pullback' else 'market_cap_usd' if snapshot.get('ath_source_kind')=='pump_provider' else 'price_usd', **self.position}

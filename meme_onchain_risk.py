@@ -80,12 +80,14 @@ class OnchainRisk:
                 if len(matched)!=1: continue
                 classified+=1;wallet,signal=matched[0]
                 if signal['action']=='buy': buyers.append(wallet);slots.append(tx.get('slot'))
+                if classified>=4 and len(buyers)>=4:
+                    break
             counts=Counter(buyers);slot_counts=Counter(slot for slot in slots if type(slot) is int)
             report.update(transactions_inspected=inspected,classified_trades=classified,unavailable_transactions=missing,
                           sampled_buys=len(buyers),distinct_sampled_buyers=len(counts),
                           busiest_buyer_share=(max(counts.values())/len(buyers) if buyers else None),
                           busiest_slot_buy_share=(max(slot_counts.values())/len(buyers) if slot_counts and buyers else None))
-            if len(buyers)>=6 and report['busiest_buyer_share']>=.7:
+            if len(buyers)>=4 and report['busiest_buyer_share']>=.75:
                 report['reasons'].append('one wallet dominates the recent buy sample')
             if len(buyers)>=4 and len(counts)>=3 and (report['busiest_slot_buy_share'] or 0)>=.75:
                 report['reasons'].append('recent buys cluster in one slot; possible coordination')

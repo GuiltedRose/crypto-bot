@@ -254,11 +254,13 @@ class RecoveryTests(unittest.TestCase):
         self.store.close();self.store=MemeLiveStore(self.temp.name,self.user,self.rules)
         self.assertEqual(self.store.state['position']['units'],100)
     def test_confirmed_buy_preserves_intent_exit_limits(self):
-        self.intent.update(take_profit_usd=.75,max_loss_usd=.15)
+        self.intent.update(take_profit_usd=.75,max_loss_usd=.15,
+            entry_context={'recorded_before_order':True,'flow_metrics':{'buy_sell_ratio':1.2}})
         self.reserve();self.orders.db.execute("INSERT INTO orders VALUES('order','sig','confirmed')")
         self.engine.recover()
         self.assertEqual(self.store.state['position']['take_profit_usd'],.75)
         self.assertEqual(self.store.state['position']['max_loss_usd'],.15)
+        self.assertEqual(self.store.state['position']['entry_context'],self.intent['entry_context'])
 
     def test_ambiguous_send_blocks_replacement_orders_and_preserves_position(self):
         self.reserve();self.orders.db.execute("INSERT INTO orders VALUES('order','sig','uncertain')");self.orders.next_status='uncertain'
@@ -274,6 +276,7 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(self.engine.recover()['status'],'transaction_failed')
         self.assertAlmostEqual(self.store.state['realized_pnl_usd'],-.0005)
         self.assertIsNone(self.store.state['position'])
+        self.assertEqual(self.store.state['learning_model_live']['samples'],0)
     def test_missing_receipt_and_wrong_signature_do_not_apply_fills(self):
         self.reserve();self.orders.db.execute("INSERT INTO orders VALUES('order','sig','confirmed')");self.tx=None
         self.assertEqual(self.engine.recover()['status'],'waiting_for_confirmed_receipt')
@@ -282,14 +285,24 @@ class RecoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'signature'): self.engine.recover()
         self.assertIsNotNone(self.store.state['pending'])
     def test_sell_books_actual_proceeds_and_preserves_rent_principal(self):
-        self.store.state['position']={'mint':'mint','units':100,'cost_usd':1.0005}
+        entry_context={'recorded_before_order':True,
+            'flow_metrics':{'buy_sell_ratio':1.2,'hourly_turnover_to_liquidity':2,
+                'max_completed_candle_range_fraction':.08}}
+        self.store.state['position']={'mint':'mint','units':100,'cost_usd':1.0005,
+            'entry_context':entry_context}
+        self.store.save('reserved',{'id':'entry','side':'buy','mint':'mint','entry_context':entry_context})
+        self.store.save('confirmed_buy',{'mint':'mint','signature':'entry-signature'})
         self.intent.update(side='sell',input_units=100,minimum=10000000)
         self.reserve();self.orders.db.execute("INSERT INTO orders VALUES('order','sig','confirmed')")
         self.tx=receipt(self.user,'mint','base','quote',100,0,-5000,quote_delta=12000000)
         result=self.engine.recover()
         self.assertEqual(result['status'],'confirmed_sell')
         self.assertAlmostEqual(result['pnl_usd'],.199)
+        self.assertFalse(result['learning_update']['updated'])
+        self.assertEqual(self.store.state['learning_model_live']['samples'],0)
         self.assertIsNone(self.store.state['position'])
+        self.store.close();self.store=MemeLiveStore(self.temp.name,self.user,self.rules)
+        self.assertEqual(self.store.state['learning_model_live']['samples'],0)
 
 class PumpSwapTests(unittest.TestCase):
     def setUp(self):

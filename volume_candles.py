@@ -77,7 +77,8 @@ def assess_reclaim(snapshot,bars,rules):
         found.append((dip,peak,gain,depth))
     if not found: return watch('no intact momentum/pullback setup in observed history')
     qualified=[x for x in found if reclaim['close']>x[0]['high'] and reclaim['close']>reclaim['open']
-               and reclaim['volume_usd']>=x[0]['volume_usd'] and reclaim['volume_usd']>0]
+               and reclaim['volume_usd']>=x[0]['volume_usd']*rules.reclaim_volume_fraction
+               and reclaim['volume_usd']>0]
     if not qualified: return watch('waiting for reclaim with renewed activity',setups_tracked=len(found))
     dip,peak,gain,depth=qualified[-1]
     price=snapshot['price_usd']
@@ -86,5 +87,6 @@ def assess_reclaim(snapshot,bars,rules):
     return {'action':'buy','reasons':[],'reason':'upward impulse, pullback and volume-backed reclaim',
             'metrics':{'peak_price':peak,'pullback_low':dip['low'],'pullback_fraction':depth,
                        'runup_gain_fraction':gain,'completed_bars':len(bars),
+                       'reclaim_to_pullback_volume_ratio':reclaim['volume_usd']/dip['volume_usd'] if dip['volume_usd']>0 else None,
                        'buy_volume_usd':buy,'sell_volume_usd':sell,'buy_sell_ratio':ratio,
                        'human_buyers_verified':False}}

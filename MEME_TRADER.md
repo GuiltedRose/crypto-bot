@@ -1,10 +1,11 @@
 # Meme trader conversion
 
 Active entry correction: `momentum_reclaim_enabled: true` requires an upward
-impulse, a 2–50% pullback, and a completed bullish reclaim above the pullback
-candle high with renewed candle volume. One-hour buy volume must be at least
-1.1 times reported sell volume; missing sell-volume evidence or weaker buying
-remains WATCH. Broken lows, missing intervals and chased quotes remain WATCH.
+impulse of at least 3%, a 1–50% pullback, and a completed bullish reclaim above
+the pullback candle high with at least 75% of its volume. One-hour buy volume
+must meet or exceed reported sell volume; missing sell-volume evidence or
+net selling remains WATCH. Broken lows, missing intervals and chased quotes
+remain WATCH.
 The $5,000 minimum and position/exit controls stay. Two consecutive confirmed
 net losses pause new entries for one hour; managing an open position is not
 paused.
@@ -34,12 +35,12 @@ The current `meme_live_rules.json` uses `entry_style: volume_candles` and
 
 - At least **$5,000 provider-reported buy volume over one hour**, with at least
   95% window coverage, and **three real, completed one-minute candles**.
-- Provider-reported one-hour buy volume is at least **1.1x sell volume**.
-  Missing sell-volume data or weaker buy pressure remains WATCH.
-- An intact upward impulse, a bearish pullback of **2–50%**, then a completed
-  bullish reclaim above the pullback candle high with volume at least as large
-  as the pullback candle. A broken low, missing interval, stale data or chased
-  quote remains WATCH; candles are not synthesized to fill gaps.
+- Provider-reported one-hour buy volume is at least **$5,000** and meets or
+  exceeds sell volume. Missing sell-volume data or net selling remains WATCH.
+- An intact upward impulse of at least **3%**, a bearish pullback of **1–50%**,
+  then a completed bullish reclaim above the pullback candle high with at least
+  **75%** of the pullback candle's volume. A broken low, missing interval,
+  stale data or chased quote remains WATCH; candles are not synthesized.
 - Live entries also pass the bounded on-chain concentration/activity check.
   This is not proof of human buyers, bundle safety or absence of manipulation.
 - **$1.78 maximum input**, **$1 net TP**, and **$0.20 net SL trigger** at the
@@ -185,11 +186,39 @@ The report is `state/research/bot_outcomes.json`, refreshed by the research
 worker even while public-history collection is unavailable. It gives empirical
 per-profile/source performance, decision-to-outcome records, and outcomes by
 buy/sell flow, turnover/liquidity, candle range and sampled on-chain risk status.
-A negative cohort is only flagged for review after ten outcomes; paper and live
-samples remain separate. This is diagnostic feedback, not validated prediction
-or automatic rule optimization. The fixed one-hour pause after two consecutive
-confirmed losses is a risk guard, not a learned profitability claim. Manual
-receipt deltas do not become profit labels before cost/rent reconstruction.
+A negative live cohort blocks new entries in the matching observed market
+context after ten confirmed outcomes; paper samples do not affect live entries.
+This is a conservative veto, not validated prediction or automatic threshold
+optimization. The fixed one-hour pause after two consecutive confirmed losses
+is a risk guard, not a learned profitability claim. Manual receipt deltas do
+not become profit labels before cost/rent reconstruction.
+
+The live runner maintains an experimental, CPU-only online logistic learner
+trained **only** on followed-wallet outcomes. It uses the configured wallet
+list, not leaderboard-discovered wallets, the bot's own live trades, or paper
+trades. It begins observing each followed wallet at first collection, and only
+uses complete, receipt-backed buy-to-zero-balance cycles with contiguous
+signatures and unambiguous swap cashflows. A missed-signature gap, non-swap
+token movement, pre-existing position, account-creation/rent instruction or
+ambiguous receipt invalidates the affected cycle. The labels are realized net
+amounts in the trade's quote currency (SOL or USDC), so the model learns the
+positive/negative outcome, not cross-currency P&L magnitude. SOL network fees
+are included in native-quote flows; USDC-quoted cycles are ignored when the
+followed wallet paid the SOL network fee, since the learner does not convert
+that fee to USDC.
+
+The learner uses bounded feature weights and inverse-frequency class weights.
+Its features use followed-wallet buy size, the count of current followed-wallet
+buyers, and each wallet's prior closed-cycle win rate. It does not claim to
+learn candle/market effects from those wallet-only labels. It is a small binary
+model, not a neural-network framework. Its score does not
+authorize entries, loosen risk checks, change thresholds, or increase position
+size. The report shows only followed-wallet training samples for the live
+model. Fewer than ten closed outcomes are insufficient for interpretation;
+the score is not calibrated or evidence of profitability. Paper/live outcomes
+remain useful diagnostics but do not train this model. The separate
+negative-cohort entry veto still uses confirmed bot-live trades only.
+
 The bot's own purchases never become independent fresh-market endorsements
 merely because they are in this research archive.
 
@@ -338,7 +367,8 @@ establish that a later sell will succeed. Migration exits resolve and validate
 the new pool for the same mint.
 
 An additional on-chain entry gate samples the 20 largest token accounts and
-up to eight recent mint-referenced transactions. It excludes the verified pool
+up to eight recent mint-referenced transactions, stopping after four usable
+buys when enough recent data is available. It excludes the verified pool
 vault, groups sampled accounts by owner and rejects a non-pool owner above 10%
 of supply or sampled top-ten owners above 50%. It flags repeat-buyer dominance
 and multiple buyers clustered in one slot; these are suspicion signals, not

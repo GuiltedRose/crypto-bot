@@ -165,6 +165,8 @@ def collect_once(watcher, wallets, directory, now=None, callout_source=None, hot
         except Exception as error: leaderboard_report=source_error(error)
     effective=effective_wallets(wallets,leaders,time.time() if now is None else now)
     try:
+        if hasattr(watcher,'set_followed_wallets'):
+            watcher.set_followed_wallets(wallets)
         report = watcher.poll(effective, now=now)
     except Exception as error:
         report = dict(unavailable('incomplete'), wallet_checks={}, errors={'collector': source_error(error)})

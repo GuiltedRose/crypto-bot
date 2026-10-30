@@ -4,9 +4,10 @@
 
 - The configured live rules enable `momentum_reclaim_enabled`. In addition to
   reported hourly buy volume and completed candles, `volume_candles` requires
-  buy volume at least 1.1x sell volume, an intact upward impulse, pullback and
-  volume-backed bullish reclaim. Missing sell flow remains WATCH. With that
-  flag disabled, it falls back to the less selective volume/candle minimums.
+  hourly buy volume at least equal to sell volume, an intact 3% upward impulse,
+  1–50% pullback and bullish reclaim with at least 75% of pullback-candle
+  volume. Missing sell flow remains WATCH. With that flag disabled, it falls
+  back to the less selective volume/candle minimums.
 - Two consecutive confirmed net losses pause new entries for one hour. This
   fixed cooldown is risk containment, not a learned edge.
 - Live entries with the reclaim policy enabled invoke the bounded on-chain risk
@@ -18,10 +19,10 @@
 - Existing live, paper and paired-paper samples are too small and differ in
   execution/evidence assumptions to establish a profitable strategy or justify
   tuning funded thresholds.
-- Decision contexts now retain flow, candle range, turnover/liquidity and
-  bounded on-chain observations for source-separated outcome analysis. Cohorts
-  need ten outcomes before they are flagged for review; there is no automatic
-  strategy promotion or stake adaptation.
+- Decision contexts retain flow, candle range, turnover/liquidity and bounded
+  on-chain observations. A negative cohort of ten confirmed live trades blocks
+  matching new entries; paper outcomes are separate. No thresholds, stakes or
+  strategy profiles are automatically promoted.
 
 ## Research findings
 
