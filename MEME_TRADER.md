@@ -1408,3 +1408,21 @@ mandatory. Live refresh remains restricted to its loss cooldown; no execution is
 started by evaluation. Paper-qualified replay evidence is not live profitability.
 The compact paper console labels OOS challenger metrics and post-promotion
 monitoring separately from training-label counts.
+
+### Progressive paper-bankroll resets
+
+Automatic paper resets now target `max($6, confirmed_milestone * 0.85)`, rounded
+to cents. The reference progresses through $6, $10, $25, $50, $100, $250, $500,
+$1,000, $2,500, $5,000, and the same pattern at larger scales. It is recorded
+only while flat from starting bot capital plus realized bot P&L; open-position
+marks and temporary SOL valuation changes do not raise it. The highest confirmed
+milestone persists across losses, resets and restarts. Existing settled checkpoint
+history seeds the reference when this feature first initializes.
+
+Examples: a $10 milestone resets to $8.50; $100 resets to $85; $1,000 resets to
+$850. A milestone below $10 resets to the $6 minimum. Native-SOL ledgers use the
+last recorded SOL valuation to allocate the target, preserving the inventory mix
+with native fee-reserve headroom. Reset funding is an audited zero-P&L event,
+atomically recorded with the new run; it never counts as a trade or training win.
+Open positions block resets, all completed outcomes remain, and live controls
+and live balances are unchanged. `--no-auto-reset` still disables auto-refills.

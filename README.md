@@ -150,7 +150,9 @@ inputs remain in the journals and reports; display formatting does not filter
 training data.
 
 Reports and journals stay in the selected state directory. By default, exhausted or drawdown-halted paper runs archive
-and refill their original virtual inventory when flat. `--no-auto-reset` keeps
+and refill to `max($6, confirmed milestone × 0.85)` when flat. Milestones
+($10, $25, $50, $100, $250, $500, $1,000, …) persist across runs and use
+settled starting capital plus realized trading P&L, excluding temporary marks. `--no-auto-reset` keeps
 them stopped instead. Offline `--feed` replay does not auto-reset. See the
 [paper guide](MEME_TRADER.md#persistent-paper-runner-restart-and-reset) for
 explicit resets, other cost models, and rule changes.

@@ -41,3 +41,10 @@ class PaperConsoleTests(unittest.TestCase):
         for value in ('EXIT OOS challenger','10 positions','accuracy 80.0%','Brier 0.120',
                       'net vs rules $+0.50','rollbacks 1','quote replay'):
             self.assertIn(value,text)
+
+    def test_progressive_reset_prints_target_and_confirmed_reference(self):
+        text=format_report({'marked_equity_usd':85},[{'action':'paper_balance_reset',
+            'reset_bankroll_usd':85,'reference_milestone_usd':100}])
+        self.assertIn('virtual bankroll $85.00',text)
+        self.assertIn('milestone $100.00',text)
+        self.assertIn('not P&L',text)

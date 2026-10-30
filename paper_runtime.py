@@ -89,6 +89,7 @@ class PaperSession:
                 if balance is None:
                     raise ValueError('First paper run requires an explicit --balance')
                 self._create(balance, rules or DipRules(), native_sol, sol_price_usd)
+            self.record_bankroll_milestone()
         except Exception:
             self.close()
             raise
@@ -102,7 +103,7 @@ class PaperSession:
         self.run_id, self.initial, self.trader = run_id, initial, trader
         self.db.commit()
 
-    def reset(self, balance, rules=None, native_sol=None, sol_price_usd=None):
+    def reset(self, balance, rules=None, native_sol=None, sol_price_usd=None,audit=None):
         # Validate the replacement before archiving anything.
         replacement = PaperDipTrader(balance, rules or self.trader.rules, native_sol, sol_price_usd)
         initial = {'balance': balance, 'native_sol': native_sol, 'sol_price_usd': sol_price_usd}
@@ -111,6 +112,10 @@ class PaperSession:
             self.db.execute('UPDATE paper_runs SET archived=? WHERE id=?', (time.time(), self.run_id))
             self.db.execute('INSERT INTO paper_runs VALUES(?,?,?,?,?)',
                             (run_id, time.time(), None, json.dumps(initial), json.dumps(encode_state(replacement), allow_nan=False)))
+            if audit is not None:
+                audit.update(archived_run=self.run_id,new_run=run_id,initial_inventory=initial)
+                self.db.execute('INSERT INTO paper_events(run_id,fingerprint,observed,event,snapshot) VALUES(?,?,?,?,?)',
+                    (run_id,str(uuid.uuid4()),time.time(),json.dumps(audit,allow_nan=False),'{}'))
         previous = self.run_id
         self.run_id, self.initial, self.trader = run_id, initial, replacement
         return previous
@@ -177,6 +182,7 @@ class PaperSession:
             self.db.execute('UPDATE paper_runs SET checkpoint=? WHERE id=?',
                             (json.dumps(encode_state(candidate), allow_nan=False), self.run_id))
         self.trader = candidate
+        if event.get('action')=='paper_sell':self.record_bankroll_milestone()
         for position in candidate.all_positions():
             if position['mint']==snapshot.get('mint') and 'last_net_pnl_usd' in position:
                 from neural_exits import record
@@ -251,10 +257,30 @@ class PaperSession:
                 'evaluation':model['exit_model'].get('evaluation',{})}}
         return self.learning_summary
 
+    def record_bankroll_milestone(self):
+        from paper_bankroll import confirmed_milestone
+        with self.db:
+            self.db.execute('CREATE TABLE IF NOT EXISTS paper_bankroll_progression(id INTEGER PRIMARY KEY CHECK(id=1),milestone REAL NOT NULL)')
+            row=self.db.execute('SELECT milestone FROM paper_bankroll_progression WHERE id=1').fetchone()
+            previous=row[0] if row else 6.
+            if row is None:
+                for raw, in self.db.execute('SELECT checkpoint FROM paper_runs'):
+                    old=json.loads(raw)
+                    if old.get('position') or old.get('positions'):continue
+                    if 'strategy_capital_usd' in old and 'strategy_realized_pnl_usd' in old:
+                        previous=max(previous,confirmed_milestone(max(0,old['strategy_capital_usd']+old['strategy_realized_pnl_usd'])))
+            reference=previous
+            if not self.trader.all_positions():
+                settled=max(0,self.trader.strategy_capital_usd+self.trader.strategy_realized_pnl_usd)
+                reference=max(previous,confirmed_milestone(settled))
+            self.db.execute('INSERT OR REPLACE INTO paper_bankroll_progression VALUES(1,?)',(reference,))
+        return reference
+
     def auto_reset_if_exhausted(self):
         """Refill only virtual inventory, while flat, after actual paper activity."""
         trader=self.trader
-        if trader.position is not None: return None
+        if trader.all_positions(): return None
+        reference=self.record_bankroll_milestone()
         closed=self.db.execute("SELECT 1 FROM paper_events WHERE run_id=? AND json_extract(event,'$.action')='paper_sell' LIMIT 1",(self.run_id,)).fetchone()
         if not closed and not trader.halted: return None
         liquid=trader.cash
@@ -264,13 +290,19 @@ class PaperSession:
             trader.native_sol is not None and trader.native_sol<=trader.rules.native_fee_reserve_sol)
         if not exhausted and not trader.halted: return None
         reason='drawdown halt' if trader.halted else 'spendable paper balance exhausted'
-        initial=dict(self.initial)
-        previous=self.reset(initial['balance'],trader.rules,initial['native_sol'],initial['sol_price_usd'])
-        event={'action':'paper_balance_reset','reason':reason,'archived_run':previous,
-            'new_run':self.run_id,'initial_inventory':initial,'pnl_usd':0,'data_kind':'paper_accounting'}
-        with self.db:
-            self.db.execute('INSERT INTO paper_events(run_id,fingerprint,observed,event,snapshot) VALUES(?,?,?,?,?)',
-                (self.run_id,str(uuid.uuid4()),time.time(),json.dumps(event),'{}'))
+        from paper_bankroll import reset_target
+        target=reset_target(reference)
+        balance=target;native=price=None
+        if trader.native_sol is not None:
+            price=trader.sol_price_usd
+            initial_total=self.initial['balance']+self.initial['native_sol']*self.initial['sol_price_usd']
+            share=self.initial['native_sol']*self.initial['sol_price_usd']/initial_total
+            native_value=min(target,max(target*share,(trader.rules.native_fee_reserve_sol+.00002)*price))
+            native=native_value/price;balance=target-native_value
+        event={'action':'paper_balance_reset','reason':reason,'reference_milestone_usd':reference,
+            'reset_bankroll_usd':target,'reset_reduction_fraction':.15,
+            'pnl_usd':0,'data_kind':'paper_accounting'}
+        self.reset(balance,trader.rules,native,price,audit=event)
         return event
 
     def report(self):
@@ -301,6 +333,7 @@ class PaperSession:
                 'locked_rent_sol':sum(self.trader.account_rent.values()),
                 'valuation_as_of': self.trader.last_timestamp, 'realized_pnl_usd': realized,
                 'rolling_performance':recent,
+                'reset_reference_milestone_usd':self.db.execute('SELECT milestone FROM paper_bankroll_progression WHERE id=1').fetchone()[0],
                 'position': position,'positions':self.trader.all_positions(),'max_positions':self.trader.max_positions, 'drawdown_halted': self.trader.halted,
                 'consecutive_losses':self.trader.consecutive_losses,
                 'loss_cooldown_until':self.trader.loss_cooldown_until,

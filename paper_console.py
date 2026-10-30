@@ -14,7 +14,10 @@ def format_report(report,events=()):
         elif action=='paper_sell':
             lines.append(f"SELL {short} | net ${event['pnl_usd']:+.2f} | {event.get('reason','exit')}")
         elif action=='paper_balance_reset':
-            lines.append('RESET | virtual balance refilled; completed trades retained for training')
+            if 'reset_bankroll_usd' in event:
+                lines.append(f"RESET | virtual bankroll ${event['reset_bankroll_usd']:.2f} · milestone ${event['reference_milestone_usd']:.2f} | funding, not P&L")
+            else:
+                lines.append('RESET | virtual balance refilled; completed trades retained for training')
         elif action in ('reject','watch'):
             reasons=event.get('reasons') or [event.get('reason')]
             blockers.update(reason for reason in reasons if reason)

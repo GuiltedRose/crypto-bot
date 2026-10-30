@@ -57,7 +57,7 @@ class PaperRuntimeTests(unittest.TestCase):
             event=session.auto_reset_if_exhausted()
             self.assertEqual(event['archived_run'],previous)
             self.assertEqual(event['pnl_usd'],0)
-            self.assertEqual(session.trader.cash,10)
+            self.assertEqual(session.trader.cash,8.5)
             self.assertFalse(session.trader.halted)
             after=session.refresh_learning()
             self.assertEqual(before,after)
@@ -75,7 +75,7 @@ class PaperRuntimeTests(unittest.TestCase):
             session.trader.cash=.5
             event=session.auto_reset_if_exhausted()
             self.assertEqual(event['reason'],'spendable paper balance exhausted')
-            self.assertEqual(session.trader.cash,10)
+            self.assertEqual(session.trader.cash,8.5)
         finally:session.close()
 
     def test_paper_cooldown_shortens_existing_wait_and_survives_restart(self):
