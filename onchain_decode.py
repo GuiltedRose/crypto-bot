@@ -36,8 +36,22 @@ def read_value(raw, kind, offset, types):
     if isinstance(kind, str) and kind[:1] in ('u', 'i') and kind[1:].isdigit():
         value, end = take(int(kind[1:]) // 8)
         return int.from_bytes(value, 'little', signed=kind[0] == 'i'), end
+    if isinstance(kind, dict) and 'option' in kind:
+        tag, offset = read_value(raw, 'u8', offset, types)
+        if tag not in (0, 1):
+            raise ValueError('Invalid Borsh option tag')
+        return read_value(raw, kind['option'], offset, types) if tag else (None, offset)
     if isinstance(kind, dict) and 'defined' in kind:
-        fields = types[kind['defined']['name']]['fields']
+        definition = types[kind['defined']['name']]
+        if definition.get('kind') == 'enum':
+            tag, offset = read_value(raw, 'u8', offset, types)
+            if tag >= len(definition['variants']):
+                raise ValueError('Invalid Borsh enum tag')
+            variant = definition['variants'][tag]
+            if variant.get('fields'):
+                raise ValueError('Unreviewed enum payload')
+            return variant['name'], offset
+        fields = definition['fields']
         if fields and isinstance(fields[0], str):
             values = []
             for field in fields:
@@ -110,6 +124,7 @@ class Decoder:
             parents = {}
             swaps = []
             emitted = set()
+            supplements = set()
             for ordinal, ix in enumerate([root] + inner.get(outer, [])):
                 try:
                     program = ix.get('programId') or keys[ix['programIdIndex']]
@@ -136,7 +151,13 @@ class Decoder:
                         parents[height] = (program, instruction['name'], binding, ordinal, None)
                         if instruction['name'].startswith(('buy', 'sell')):
                             swaps.append(ordinal)
-                        arguments, end = read_struct(raw, instruction['args'], 8, spec['types'])
+                        arguments, end = {}, 8
+                        for argument in instruction['args']:
+                            # Official TRADE_V3 explicitly permits this trailing flag's omission.
+                            if end == len(raw) and instruction['name'] in ('buy_v3', 'buy_exact_quote_in_v3') and argument['name'] == 'partial_fill':
+                                arguments[argument['name']] = None
+                            else:
+                                arguments[argument['name']], end = read_value(raw, argument['type'], end, spec['types'])
                         if end != len(raw):
                             raise ValueError('Unreviewed instruction layout/version')
                         parents[height] = (program, instruction['name'], binding, ordinal, arguments)
@@ -160,12 +181,18 @@ class Decoder:
                                  program=program, idl_hash=spec['hash'], event_name=event_name,
                                  transaction_fee_lamports=meta['fee'], raw_event=base64.b64encode(raw).decode())
                     events.append(event)
-                    if event['kind'] == 'swap':
+                    if event['kind'] == 'swap' and event_name == 'PostCompleteBuyEvent':
+                        if parent[3] in supplements:
+                            raise ValueError('Duplicate post-completion event')
+                        supplements.add(parent[3])
+                    elif event['kind'] == 'swap':
                         if parent[3] in emitted:
                             raise ValueError('Multiple trade events for one instruction')
                         emitted.add(parent[3])
                 except (KeyError, ValueError, IndexError, TypeError, UnicodeError) as error:
                     issues.append(str(error))
+            if not supplements.issubset(emitted):
+                issues.append('post-completion buy without primary trade event')
             if set(swaps) != emitted:
                 issues.append('trade instruction/event mismatch')
         if events or issues:
@@ -222,7 +249,7 @@ class Decoder:
     def normalize(self, spec, name, f, parent, decimals):
         _, instruction, binding, _, _ = parent
         result = {'kind': 'lifecycle', 'fields': f, 'venue': spec['venue']}
-        if name not in ('TradeEvent', 'BuyEvent', 'SellEvent'):
+        if name not in ('TradeEvent', 'BuyEvent', 'SellEvent', 'PostCompleteBuyEvent'):
             mint = f.get('mint', f.get('base_mint'))
             bound_mint = binding.get('mint', binding.get('base_mint'))
             if mint and bound_mint and mint != bound_mint:
@@ -230,7 +257,7 @@ class Decoder:
             result.update(mint=mint, pool=f.get('pool', f.get('bonding_curve')),
                           wallet=f.get('user', f.get('creator')))
             return result
-        buy = f['is_buy'] if name == 'TradeEvent' else name == 'BuyEvent'
+        buy = f['is_buy'] if name == 'TradeEvent' else name in ('BuyEvent', 'PostCompleteBuyEvent')
         if not instruction.startswith('buy' if buy else 'sell'):
             raise ValueError('Trade direction/instruction mismatch')
         mint = binding.get('mint', binding.get('base_mint'))
@@ -241,15 +268,20 @@ class Decoder:
             raise ValueError('Missing trade identity')
         if f.get('mint', mint) != mint or f.get('pool', pool) != pool or f['user'] != user:
             raise ValueError('Trade event identity mismatch')
-        if name == 'TradeEvent':
+        if name in ('TradeEvent', 'PostCompleteBuyEvent'):
             event_quote = f['quote_mint']
             # Legacy native-SOL events encode the default pubkey as quote mint.
             if event_quote == str(Pubkey.default()):
                 event_quote = SOL
             if event_quote != quote:
                 raise ValueError('Quote identity mismatch')
-            amount = f['token_amount']
-            quote_amount = f['sol_amount'] if quote == SOL else f['quote_amount']
+            if name == 'PostCompleteBuyEvent':
+                if instruction not in ('buy_v3', 'buy_exact_quote_in_v3') or f['bonding_curve'] != pool:
+                    raise ValueError('Unbound post-completion trade')
+                amount, quote_amount = f['base_out'], f['quote_in']
+            else:
+                amount = f['token_amount']
+                quote_amount = f['sol_amount'] if quote == SOL else f['quote_amount']
         else:
             amount = f['base_amount_out' if buy else 'base_amount_in']
             quote_amount = f['quote_amount_in' if buy else 'quote_amount_out']

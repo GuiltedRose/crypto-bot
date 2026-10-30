@@ -1,6 +1,8 @@
 # Local Pump indexer: implementation and validation
 
 2026-10-30. **Working isolated pipeline, not production-ready market coverage.**
+
+Current deployment/catch-up changes and measurements: [deployment guide](../docs/onchain_deployment.md).
 No live execution, wallet-secret changes, paid services, existing ledger edits or
 model/evaluation parameter changes. Ten consecutive challenger promotions remain
 mandatory. New data is not approved for learning merely because it came from RPC.
@@ -18,7 +20,7 @@ mandatory. New data is not approved for learning merely because it came from RPC
   finalized block hashes/parents/times, compressed relevant raw transactions and
   hashes, canonical event keys `(signature, outer_index, event_index)`, explicit
   slot manifests and transactional checkpoints. Conflicting duplicates fail;
-  a failed/interrupted batch cannot advance progress. Existing trading and frozen
+  an interrupted batch preserves committed blocks and cannot advance past a failed block. Existing trading and frozen
   challenger databases are not opened by the indexer.
 - `onchain_ingest.py`: bounded finalized `getBlocks`/`getBlock` polling, explicit
   mainnet verification, ProgramData deployment-slot checks, shared provider budget,
@@ -160,13 +162,13 @@ This example illustrates modeled virtual costs, not a fiat conversion source for
 market data. The source still needs genuine verified conversions. New data rights
 and provenance survive decision-context recording. Unapproved samples may be
 retained as quarantined trade records but cannot update weights; no new data was
-fed to the operational NN. The local source is **not wired into live execution**.
+fed to the operational NN. The local source is wired into **unsigned live simulation only**; combining it with `--execute` is blocked before signer loading.
 The analytics interface is available for future reviewed integration without
 changing wallet monitoring, transaction construction or the promotion gate.
 
 ## Focused validation
 
-- 20 new indexer tests: exact known-layout synthetic curve/AMM buy/sell and fee
+- Initial 20 indexer tests (now 30 after deployment review): exact known-layout synthetic curve/AMM buy/sell and fee
   decoding, real fixture quarantine, lifecycle/migration, SPL transfer identity,
   multiple swaps, duplicates and out-of-order insertion, skipped versus missing
   slots, incomplete windows, unknown deployments, stale/future/missing/conflicting

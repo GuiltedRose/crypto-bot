@@ -12,8 +12,13 @@ def canonical(value):
 
 
 class EventStore:
-    def __init__(self, path):
+    def __init__(self, path, readonly=False):
         self.path = Path(path)
+        self.readonly = readonly
+        if readonly:
+            if not self.path.is_file():
+                raise ValueError("Local index database does not exist; start the indexer first")
+            return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
             db.executescript('''
@@ -38,6 +43,7 @@ class EventStore:
                     start INTEGER PRIMARY KEY, end INTEGER NOT NULL, source TEXT NOT NULL,
                     slots TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS checkpoints(name TEXT PRIMARY KEY, value INTEGER NOT NULL);
+                CREATE TABLE IF NOT EXISTS telemetry(name TEXT PRIMARY KEY, payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS conversions(
                     mint TEXT NOT NULL, time INTEGER NOT NULL, usd TEXT NOT NULL,
                     source TEXT NOT NULL, proof TEXT NOT NULL, PRIMARY KEY(mint,time,source));
@@ -45,10 +51,16 @@ class EventStore:
 
     @contextmanager
     def connect(self):
-        db = sqlite3.connect(self.path, timeout=30)
+        if self.readonly:
+            from urllib.parse import quote
+            db = sqlite3.connect('file:' + quote(str(self.path.resolve()), safe='/') + '?mode=ro', uri=True, timeout=30)
+            db.execute('PRAGMA query_only=ON')
+        else:
+            db = sqlite3.connect(self.path, timeout=30)
         db.row_factory = sqlite3.Row
-        db.execute('PRAGMA journal_mode=WAL')
-        db.execute('PRAGMA synchronous=FULL')
+        if not self.readonly:
+            db.execute('PRAGMA journal_mode=WAL')
+            db.execute('PRAGMA synchronous=FULL')
         try:
             with db:
                 yield db
@@ -161,9 +173,11 @@ class EventStore:
                 'sources': sources, 'through_time': right[1],
                 'first_slot': left[0], 'last_slot': right[0]}
 
-    def events(self, mint=None, pool=None, start=0, end=2**63-1, wallet=None):
+    def events(self, mint=None, pool=None, start=0, end=2**63-1, wallet=None, verified_only=False):
         query = 'SELECT payload FROM events WHERE time>=? AND time<?'
         args = [start, end]
+        if verified_only:
+            query += " AND slot IN (SELECT slot FROM blocks WHERE issues='[]')"
         for key, value in (('mint', mint), ('pool', pool), ('wallet', wallet)):
             if value is not None:
                 query += ' AND ' + key + '=?'
@@ -198,6 +212,18 @@ class EventStore:
         if len({Decimal(row['usd']) for row in newest}) != 1:
             raise ValueError('Conflicting USD conversion sources')
         return Decimal(rows[0]['usd']), rows[0]['source'], rows[0]['time']
+
+    def save_progress(self, value):
+        with self.connect() as db:
+            db.execute('INSERT OR REPLACE INTO telemetry VALUES(?,?)', ('progress', canonical(value)))
+
+    def progress(self):
+        with self.connect() as db:
+            # Older index databases remain readable until the writer migrates them.
+            if not db.execute("SELECT 1 FROM sqlite_master WHERE name='telemetry'").fetchone():
+                return None
+            row = db.execute("SELECT payload FROM telemetry WHERE name='progress'").fetchone()
+        return json.loads(row[0]) if row else None
 
     def watermark(self):
         with self.connect() as db:

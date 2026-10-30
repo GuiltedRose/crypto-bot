@@ -50,6 +50,9 @@ class IndexRpc:
         payload = json.loads(raw)
         if 'error' in payload:
             code = payload['error'].get('code')
+            if code in (401, 403):
+                self.budget.failure(self.url, code)
+                raise SourceAccessBlocked('RPC access denied; review authorization')
             if code in (429, -32005):
                 self.budget.failure(self.url, 429 if code == 429 else 503)
             raise PublicRpcError(code)
@@ -113,28 +116,33 @@ class Ingester:
         cursor = self.store.next_slot()
         if cursor is not None and start is not None and cursor != start:
             raise ValueError('Resume saved checkpoint; use another database for another start')
-        start = cursor if cursor is not None else start
-        if type(start) is not int or start < 0:
+        initial = cursor if cursor is not None else start
+        if type(initial) is not int or initial < 0:
             raise ValueError('Explicit initial finalized start slot required')
-        # Failover only on transport failure, never on 429/access denial/quota errors.
+        started = time.monotonic()
+        # Failover resumes the durable prefix, never restarts it or evades throttles.
         for index, rpc in enumerate(self.endpoints):
+            start = self.store.next_slot()
+            start = initial if start is None else start
             try:
                 rpc.validate()
                 finalized = rpc.call('getSlot', [{'commitment': 'finalized'}])
+                sampled_at = time.time()
                 end = min(start + count - 1, finalized)
                 if end < start:
-                    return {'status': 'caught_up', **self.store.metrics()}
+                    return self.record_progress(finalized, sampled_at, initial, started, 'caught_up')
                 deployments = self.deployments(rpc)
                 slots = rpc.call('getBlocks', [start, end, {'commitment': 'finalized'}])
-                if not isinstance(slots, list):
-                    raise ValueError('Finalized slot manifest unavailable')
-                decoded = []
+                if not isinstance(slots, list) or slots != sorted(set(slots)) or any(
+                        type(slot) is not int or not start <= slot <= end for slot in slots):
+                    raise ValueError('Invalid finalized slot manifest')
+                next_slot = start
                 for slot in slots:
                     block = rpc.call('getBlock', [slot, {'commitment': 'finalized', 'encoding': 'json',
                                      'transactionDetails': 'full', 'maxSupportedTransactionVersion': 1,
                                      'rewards': False}])
                     if not block or not isinstance(block.get('transactions'), list):
-                        raise ValueError('Missing finalized block; checkpoint unchanged')
+                        raise ValueError('Missing finalized block; durable prefix preserved')
                     events, issues, relevant = [], self.version_issues(slot, deployments), []
                     for tx_index, tx in enumerate(block['transactions']):
                         try:
@@ -146,27 +154,68 @@ class Ingester:
                         events.extend(found)
                         issues.extend(errors)
                     block['_indexer_deployments'] = deployments
-                    decoded.append((slot, block, events, sorted(set(issues)), relevant))
-                self.store.commit_range(start, end, slots, decoded, rpc.source)
-                return {'status': 'indexed', 'range': [start, end], **self.store.metrics()}
+                    decoded = (slot, block, events, sorted(set(issues)), relevant)
+                    # One block in memory. Commit known skipped slots plus this block
+                    # atomically, so interruptions lose at most the in-flight request.
+                    self.store.commit_range(next_slot, slot, [slot], [decoded], rpc.source)
+                    next_slot = slot + 1
+                if next_slot <= end:
+                    self.store.commit_range(next_slot, end, [], [], rpc.source)
+                return self.record_progress(finalized, sampled_at, initial, started, 'indexed')
             except ConnectionError:
                 if index + 1 == len(self.endpoints):
                     raise
         raise ValueError('No authorized endpoint available')
 
+    def record_progress(self, finalized, sampled_at, initial, started, status):
+        previous = self.store.progress()
+        cursor = self.store.next_slot()
+        cursor = initial if cursor is None else cursor
+        elapsed = max(time.monotonic() - started, .000001)
+        processed = max(0, cursor - initial)
+        production = None
+        if previous:
+            span = sampled_at - previous['head_sampled_at']
+            delta = finalized - previous['finalized_head']
+            if 0 < span <= 300 and delta >= 0:
+                production = delta / span
+        lag = max(0, finalized - cursor + 1)
+        growing = bool(previous and lag > previous['lag_slots'])
+        rate = processed / elapsed
+        progress = {'finalized_head': finalized, 'head_sampled_at': sampled_at,
+                    'next_slot': cursor, 'lag_slots': lag,
+                    'lag_growing': growing, 'processed_slots': processed,
+                    'elapsed_seconds': elapsed, 'indexed_slots_per_second': rate,
+                    'observed_production_slots_per_second': production,
+                    'keeping_up': rate >= production if production and processed else None,
+                    'warning': 'Indexing lag exceeds available throughput; coverage gates remain enforced'
+                               if growing or production and processed and rate < production else None}
+        self.store.save_progress(progress)
+        return {'status': status, 'progress': progress, **self.store.metrics()}
 
-def follow(ingester, start=None, count=8, interval=5, max_failures=6):
+
+def follow(ingester, start=None, count=8, interval=5, max_failures=6, max_catchup_slots=64):
+    if not 1 <= count <= max_catchup_slots <= 64:
+        raise ValueError('Catch-up slot bounds must be 1..64')
     failures = 0
+    batch = count
     while True:
         try:
-            result = ingester.step(start, count)
-            start = None
+            result = ingester.step(start, batch)
+            if ingester.store.next_slot() is not None:
+                start = None
             failures = 0
             yield result
-            time.sleep(max(1, interval))
+            lag = result['progress']['lag_slots']
+            batch = min(max_catchup_slots, max(count, batch * 2)) if lag else count
+            # ProviderBudget still paces every RPC; only redundant idle rest is removed.
+            if not lag:
+                time.sleep(max(1, interval))
         except SourceAccessBlocked:
             raise
         except (ConnectionError, ValueError) as error:
+            if ingester.store.next_slot() is not None:
+                start = None
             failures += 1
             delay = min(60, max(1, interval) * 2 ** min(failures, 6))
             yield {'status': 'paused', 'reason': str(error), 'error_type': type(error).__name__,

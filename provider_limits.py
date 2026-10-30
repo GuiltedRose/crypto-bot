@@ -1,4 +1,5 @@
 """Shared cross-process provider pacing; never retries a transaction submission."""
+import os
 import sqlite3
 import time
 from pathlib import Path
@@ -15,7 +16,7 @@ class ProviderBackoff(ValueError):
 
 class ProviderBudget:
     def __init__(self,path=None,clock=None,sleep=None):
-        self.path=Path(path or Path(__file__).parent/'state/provider_limits.sqlite')
+        self.path=Path(path or os.environ.get('CRYPTO_BOT_PROVIDER_LIMITS') or Path(__file__).parent/'state/provider_limits.sqlite')
         self.clock=clock or time.time;self.sleep=sleep or time.sleep
 
     def key(self,url):

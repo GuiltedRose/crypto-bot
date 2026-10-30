@@ -58,7 +58,7 @@ def transaction(venue='pump', buy=True, amount=1_000_000, quote=2_000_000_000, s
     instruction_name = 'buy' if buy else 'sell'
     if name:
         instruction_name = {'CreateEvent': 'create', 'CreatePoolEvent': 'create_pool',
-                            'CompletePumpAmmMigrationEvent': 'migrate'}[name]
+                            'CompletePumpAmmMigrationEvent': 'migrate', 'PostCompleteBuyEvent': 'buy_v3'}[name]
     ix = next(i for i in spec['instructions'].values() if i['name'] == instruction_name)
     names = [a['name'] for a in ix['accounts']]
     bindings = {n: str(Pubkey.from_bytes(hashlib.sha256(n.encode()).digest())) for n in names}
@@ -73,7 +73,7 @@ def transaction(venue='pump', buy=True, amount=1_000_000, quote=2_000_000_000, s
     fields = {'mint': MINT, 'base_mint': MINT, 'quote_mint': SOL, 'pool': POOL,
               'bonding_curve': POOL, 'user': USER, 'creator': USER, 'is_buy': buy,
               'token_amount': amount, 'sol_amount': quote, 'quote_amount': quote,
-              'base_amount_out': amount, 'base_amount_in': amount,
+              'base_amount_out': amount, 'base_amount_in': amount, 'base_out': amount, 'quote_in': quote,
               'quote_amount_in': quote, 'quote_amount_out': quote,
               'fee': 20, 'creator_fee': 30, 'lp_fee': 40, 'protocol_fee': 50,
               'coin_creator_fee': 60, 'real_sol_reserves': 100_000_000_000,
@@ -310,7 +310,7 @@ class IndexerTests(unittest.TestCase):
             self.assertEqual(opener.return_value.open.call_count, 1)
         error.close()
 
-    def test_partial_network_batch_never_advances_checkpoint(self):
+    def test_partial_network_batch_preserves_durable_prefix(self):
         rpc = FakeRpc()
         original = rpc.call
         def call(method, params):
@@ -321,11 +321,137 @@ class IndexerTests(unittest.TestCase):
         ingester = Ingester(self.store, [rpc])
         with patch.object(ingester, 'deployments', return_value={p: 0 for p in self.decoder.specs}):
             with self.assertRaises(ConnectionError): ingester.step(1, 2)
-            self.assertIsNone(self.store.next_slot())
-            self.assertEqual(self.store.metrics()['blocks'], 0)
+            self.assertEqual(self.store.next_slot(), 2)
+            self.assertEqual(self.store.metrics()['blocks'], 1)
             rpc.call = original
-            ingester.step(1, 2)
+            ingester.step(count=2)
         self.assertEqual(self.store.next_slot(), 3)
+
+    def test_post_completion_volume_is_counted_separately_without_duplication(self):
+        tx = transaction(name='PostCompleteBuyEvent')
+        primary = transaction()['meta']['innerInstructions'][0]['instructions'][0]
+        extra = tx['meta']['innerInstructions'][0]['instructions'][0]
+        first = copy.deepcopy(extra)
+        first['data'] = primary['data']
+        tx['meta']['innerInstructions'][0]['instructions'] = [first, extra]
+        events, issues = self.decoder.transaction(tx, 1, 0, 100)
+        self.assertEqual(issues, [])
+        self.assertEqual([e['event_name'] for e in events], ['TradeEvent', 'PostCompleteBuyEvent'])
+        self.assertEqual(sum(int(e['quote_units']) for e in events), 4_000_000_000)
+        tx['meta']['innerInstructions'][0]['instructions'] = [extra]
+        self.assertIn('post-completion buy without primary trade event', self.decoder.transaction(tx, 1, 0, 100)[1])
+
+    def test_documented_v3_flag_omission_and_borsh_enum_option(self):
+        from onchain_decode import read_value
+        tx = transaction(name='PostCompleteBuyEvent')
+        from wallet_watch import decode58
+        ix = tx['transaction']['message']['instructions'][0]
+        ix['data'] = encode58(decode58(ix['data'])[:-1])
+        events, issues = self.decoder.transaction(tx, 1, 0, 100)
+        self.assertNotIn('Truncated Borsh field', issues)
+        self.assertIsNone(events[0]['instruction_args']['partial_fill'])
+        types = {'Status': {'kind': 'enum', 'variants': [{'name': 'Paused'}, {'name': 'Active'}]}}
+        self.assertEqual(read_value(b'\1', {'defined': {'name': 'Status'}}, 0, types), ('Active', 1))
+        self.assertEqual(read_value(b'\0', {'option': 'u64'}, 0, {}), (None, 1))
+        with self.assertRaises(ValueError): read_value(b'\2', {'option': 'u64'}, 0, {})
+
+    def test_local_adapter_is_read_only_and_never_uses_http_fallback(self):
+        from onchain_market import OnchainSources
+        from pump_narratives import ROOT
+        import sqlite3
+        self.populated()
+        with patch('onchain_market.time.time', return_value=3600), patch('paper_sources.build_opener') as http:
+            source = OnchainSources(self.path)
+            self.assertEqual(source.fetch(ROOT+'/sol-price')['solPrice'], 100)
+            # Old held prices must not be renewed by a fresh local retrieval.
+            with self.assertRaises(ValueError): source.fetch(ROOT+'/coins-v3/'+MINT)
+            with self.assertRaises(ValueError): source.fetch('https://frontend-api-v3.pump.fun/coins')
+            self.assertFalse(http.called)
+        with source.market.store.connect() as db:
+            with self.assertRaises(sqlite3.OperationalError): db.execute('DELETE FROM events')
+        with self.assertRaises(ValueError): OnchainSources(Path(self.temp.name)/'missing.sqlite')
+        self.assertFalse((Path(self.temp.name)/'missing.sqlite').exists())
+
+    def test_catchup_is_bounded_skips_idle_and_preserves_checkpoint(self):
+        from onchain_ingest import follow
+        rpc = FakeRpc()
+        ingester = Ingester(self.store, [rpc])
+        rpc.call = lambda method, params: (100 if method == 'getSlot' else
+            list(range(params[0], params[1]+1)) if method == 'getBlocks' else
+            block(params[0], params[0]*60))
+        with patch.object(ingester, 'deployments', return_value={p: 0 for p in self.decoder.specs}), patch('onchain_ingest.time.sleep') as sleep:
+            stream = follow(ingester, start=1, count=1, max_catchup_slots=4)
+            rows = [next(stream) for _ in range(4)]
+            stream.close()
+        self.assertEqual([row['progress']['processed_slots'] for row in rows], [1, 2, 4, 4])
+        self.assertFalse(sleep.called)
+        self.assertEqual(EventStore(self.path).next_slot(), 12)
+        self.assertEqual(self.store.progress()['next_slot'], 12)
+
+    def test_growing_lag_and_slower_than_production_are_reported(self):
+        ingester = Ingester(self.store, [FakeRpc()])
+        self.store.save_progress({'finalized_head': 10, 'head_sampled_at': 100,
+                                 'next_slot': 2, 'lag_slots': 9})
+        with patch('onchain_ingest.time.monotonic', return_value=110):
+            row = ingester.record_progress(50, 110, 1, 100, 'indexed')
+        self.assertTrue(row['progress']['lag_growing'])
+        self.assertEqual(row['progress']['observed_production_slots_per_second'], 4)
+        self.assertIsNotNone(row['progress']['warning'])
+
+    def test_full_hour_and_three_candles_keep_existing_minimum_volume(self):
+        from dataclasses import replace
+        from meme_dip import DipRules
+        from volume_candles import assess_volume_candles
+        self.populated()
+        # Synthetic rates scale unit-test notional only; no operational source.
+        with self.store.connect() as db:
+            db.execute("UPDATE conversions SET usd='1000'")
+        row = OnchainMarket(self.store).observation(MINT, now=3570)
+        # Three closed bars require finality through the third minute's end.
+        self.assertEqual(len(row['candle_history']['candles']), 2)
+        row = OnchainMarket(self.store).observation(MINT, now=3600)
+        rules = replace(DipRules(evidence_mode='market_only', entry_style='volume_candles'), trend_min_bars=3)
+        self.assertEqual(row['buy_volume_usd'], 6000)
+        result = assess_volume_candles(row, 3600, rules)
+        self.assertNotIn('recent buy volume below threshold', result['reasons'])
+        self.assertFalse(any('completed 1m candles' in r for r in result['reasons']))
+        self.assertEqual(rules.min_buy_volume_usd, 5000)
+        with self.store.connect() as db:
+            db.execute("UPDATE blocks SET issues='[\"historical gap\"]' WHERE slot=2")
+        self.assertEqual(OnchainMarket(self.store).observation(MINT, now=3600)['buy_volume_coverage_pct'], 0)
+
+    def test_live_source_cannot_enable_execution_or_load_signer(self):
+        from run_meme_live import main
+        import sys
+        with patch.object(sys, 'argv', ['run_meme_live.py', '--onchain-db', str(self.path), '--execute']), patch('config.LiveConfig.from_env') as signer, patch('sys.stderr'):
+            with self.assertRaises(SystemExit): main()
+            self.assertFalse(signer.called)
+
+    def test_external_provider_budget_path(self):
+        import os
+        from provider_limits import ProviderBudget
+        path = str(Path(self.temp.name)/'external.sqlite')
+        with patch.dict(os.environ, {'CRYPTO_BOT_PROVIDER_LIMITS': path}):
+            self.assertEqual(ProviderBudget().path, Path(path))
+
+    def test_json_access_denial_is_persistent_without_retry(self):
+        from provider_limits import ProviderBudget
+        budget = ProviderBudget(Path(self.temp.name)/'limits-json.sqlite', clock=lambda: 1000)
+        rpc = IndexRpc({'url': 'https://example.invalid', 'source_id': 'fixture'}, budget)
+        with patch('onchain_ingest.build_opener') as opener:
+            response = opener.return_value.open.return_value.__enter__.return_value
+            response.read.return_value = json.dumps({'error': {'code': 403}}).encode()
+            with self.assertRaises(SourceAccessBlocked): rpc.call('getSlot', [])
+            with self.assertRaises(SourceAccessBlocked): rpc.call('getSlot', [])
+            self.assertEqual(opener.return_value.open.call_count, 1)
+
+    def test_unreviewed_block_events_cannot_supply_even_a_spot_price(self):
+        self.populated()
+        with self.store.connect() as db:
+            db.execute("UPDATE blocks SET issues='[\"unknown schema\"]'")
+        self.assertEqual(len(self.store.events(mint=MINT)), 3)
+        self.assertEqual(self.store.events(mint=MINT, verified_only=True), [])
+        with self.assertRaises(ValueError): OnchainMarket(self.store).observation(MINT, now=3600)
 
     def test_source_registration_requires_rights_and_write_methods_forbidden(self):
         with self.assertRaises(ValueError): self.store.register_source('unknown', {'storage_verified': False})

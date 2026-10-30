@@ -20,7 +20,7 @@ class OnchainMarket:
 
     def candles(self, mint, pool, start, end):
         bars = {}
-        for event in self.store.events(mint, pool, start, end):
+        for event in self.store.events(mint, pool, start, end, verified_only=True):
             if event['kind'] != 'swap':
                 continue
             minute = event['block_time'] // 60 * 60
@@ -46,7 +46,7 @@ class OnchainMarket:
 
     def observation(self, mint, now=None, pool=None):
         now = int(time.time()) if now is None else int(now)
-        candidates = [e for e in self.store.events(mint=mint, pool=pool, start=max(0, now-3600), end=now+1) if e['kind'] == 'swap']
+        candidates = [e for e in self.store.events(mint=mint, pool=pool, start=max(0, now-3600), end=now+1, verified_only=True) if e['kind'] == 'swap']
         if not candidates:
             raise ValueError('No finalized identity-matched swap')
         latest = candidates[-1]
@@ -58,7 +58,7 @@ class OnchainMarket:
         buy, sell = Decimal(0), Decimal(0)
         sources = set(hourly.get('sources', [])) | {conversion_source}
         errors = []
-        for e in self.store.events(mint, pool, window_end - 3600, window_end):
+        for e in self.store.events(mint, pool, window_end - 3600, window_end, verified_only=True):
             if e['kind'] != 'swap':
                 continue
             try:
@@ -115,30 +115,59 @@ class OnchainMarket:
                                    'candles': bars}}
 
 
-class OnchainPaperSources(ModeledPumpSources):
-    """Opt-in paper adapter reusing existing conservative execution assumptions."""
-    def __init__(self, database, evidence_dir=None):
-        super().__init__(evidence_dir=evidence_dir)
-        self.market = OnchainMarket(EventStore(database))
+class OnchainSources:
+    """Shared local observations for paper and unsigned live integration.
 
-    def market_observation(self, mint, now=None, pool=None):
+    Compatibility URLs are routed to local SQLite only. No HTTP client or
+    provider fallback exists, including for SOL and portfolio valuations.
+    """
+    modeled_quotes_only = False
+
+    def __init__(self, database):
+        self.market = OnchainMarket(EventStore(database, readonly=True))
+
+    def observation(self, mint, now=None, pool=None):
         return self.market.observation(mint, now, pool)
 
     def fetch(self, url):
-        # Compatibility with the existing modeled SOL cost ledger, not an HTTP call.
-        from pump_narratives import ROOT
-        if url != ROOT + '/sol-price':
-            raise ValueError('On-chain adapter has no website fallback')
+        from pump_narratives import ROOT, valid_mint
         now = int(time.time())
-        price, _, stamp = self.market.store.conversion(SOL, now)
-        return {'solPrice': float(price), 'stale': False, 'asOfTimestamp': stamp * 1000}
+        if url == ROOT + '/sol-price':
+            price, _, stamp = self.market.store.conversion(SOL, now)
+            return {'solPrice': float(price), 'stale': False, 'asOfTimestamp': stamp * 1000}
+        prefix = ROOT + '/coins-v3/'
+        if url.startswith(prefix):
+            mint = url[len(prefix):].split('?', 1)[0]
+            if not valid_mint(mint):
+                raise ValueError('Invalid local holding mint')
+            row = self.observation(mint, now)
+            if not 0 <= now - row['observed_at'] <= 30:
+                raise ValueError('Local holding valuation stale')
+            return row
+        raise ValueError('On-chain adapter has no website fallback')
 
     def discover(self):
-        # Discovery candidates still pass every existing paper strategy/risk gate.
-        events = self.market.store.events(start=int(time.time())-3600)
+        events = self.market.store.events(start=int(time.time())-3600, verified_only=True)
         return [{'mint': mint, 'name': '', 'symbol': '', 'description': '',
                  'observed_at': int(time.time()), 'source_url': SOURCE, 'x_anchor': None,
                  'description_fingerprint': None, 'hashtags': [],
                  'source_kind': 'finalized_chain_discovery', 'independent_endorsement': False,
                  'human_buying_verified': False, 'live_entry_authorized': False}
                 for mint in sorted({e['mint'] for e in events if e.get('mint')})]
+
+
+class OnchainPaperSources(ModeledPumpSources):
+    """Opt-in paper adapter reusing existing conservative execution assumptions."""
+    def __init__(self, database, evidence_dir=None):
+        super().__init__(evidence_dir=evidence_dir)
+        self.local = OnchainSources(database)
+        self.market = self.local.market
+
+    def market_observation(self, mint, now=None, pool=None):
+        return self.local.observation(mint, now, pool)
+
+    def fetch(self, url):
+        return self.local.fetch(url)
+
+    def discover(self):
+        return self.local.discover()

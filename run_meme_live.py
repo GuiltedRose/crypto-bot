@@ -222,8 +222,11 @@ def main():
     parser.add_argument('--loop',action='store_true')
     parser.add_argument('--json',action='store_true',help='Emit JSON console records instead of readable text; status.json remains JSON either way')
     parser.add_argument('--interval',type=float,default=30,help='Rest between flat-wallet scans (default 30s); open/pending positions rest at most 15s between checks')
+    parser.add_argument('--onchain-db',type=Path,help='Local finalized observations; unsigned mode only until real coverage is qualified')
     parser.add_argument('--execute',action='store_true',help='USER CONTROLLED: sign and submit real-money transactions')
     args=parser.parse_args()
+    if args.onchain_db and args.execute:
+        parser.error('On-chain source is shadow-only; live execution remains disabled for this source')
     if not 10<=args.interval<=3600: parser.error('Interval must be 10 through 3600 seconds')
     if len(args.mint)>5 or any(not valid_mint(mint) for mint in args.mint): parser.error('At most five valid mints')
     from meme_profiles import selected
@@ -295,7 +298,11 @@ def main():
         try: ensure_worker(args.watchlist,args.wallet_source_dir,args.rpc)
         except (OSError,ValueError): pass
         feed=SharedWalletFeed(args.wallet_source_dir)
-        sources=PumpMarketSources(args.evidence_dir,include_legacy_metrics=rules.entry_style!='volume_candles')
+        if args.onchain_db:
+            from onchain_market import OnchainSources
+            sources=OnchainSources(args.onchain_db)
+        else:
+            sources=PumpMarketSources(args.evidence_dir,include_legacy_metrics=rules.entry_style!='volume_candles')
         while True:
             try: result=tick(engine,sources,feed,wallets,args.mint,not args.no_discover,progress=publish)
             except Exception as error:

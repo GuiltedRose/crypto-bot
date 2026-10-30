@@ -13,6 +13,7 @@ def main():
     parser.add_argument('--db', type=Path, default=Path('state/onchain/index.sqlite'))
     parser.add_argument('--start-slot', type=int)
     parser.add_argument('--batch-slots', type=int, default=8)
+    parser.add_argument('--max-catchup-slots', type=int, default=64)
     parser.add_argument('--loop', action='store_true')
     parser.add_argument('--interval', type=float, default=5)
     parser.add_argument('--status', action='store_true')
@@ -25,7 +26,7 @@ def main():
         coverage = store.coverage(watermark-3600, watermark) if watermark is not None else {
             'complete': False, 'coverage_pct': 0, 'reason': 'no finalized blocks indexed'}
         result = {'mode': 'read_only_shadow', 'metrics': store.metrics(),
-                  'finalized_hour_coverage': coverage}
+                  'finalized_hour_coverage': coverage, 'progress': store.progress()}
         if args.mint:
             try:
                 result['market'] = OnchainMarket(store).observation(args.mint, pool=args.pool)
@@ -41,11 +42,12 @@ def main():
         store.register_source(endpoint['source_id'], endpoint['policy'])
         endpoints.append(IndexRpc(endpoint))
     ingester = Ingester(store, endpoints, config.get('reviewed_program_versions'))
+    start = args.start_slot if store.next_slot() is None else None
     if args.loop:
-        for result in follow(ingester, args.start_slot, args.batch_slots, args.interval):
+        for result in follow(ingester, start, args.batch_slots, args.interval, max_catchup_slots=args.max_catchup_slots):
             print(json.dumps(result), flush=True)
     else:
-        print(json.dumps(ingester.step(args.start_slot, args.batch_slots)))
+        print(json.dumps(ingester.step(start, args.batch_slots)))
 
 
 if __name__ == '__main__':

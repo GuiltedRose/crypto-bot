@@ -111,6 +111,9 @@ replacement. Saved-wallet Solana RPC remains available with shared rate limits.
 Live entries additionally require ten consecutive successful challenger promotions.
 See [audit evidence and source inventory](research/learning_source_audit_2026-10-30.md).
 
+For Nix development, separate server services and current throughput limits, see
+the [on-chain deployment guide](docs/onchain_deployment.md).
+
 An opt-in [local on-chain indexer](research/onchain_indexer.md) now provides
 durable finalized-block ingestion and paper shadow adapters. Current real
 fixtures expose unresolved event layouts; no complete real market window or new

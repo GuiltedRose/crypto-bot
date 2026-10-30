@@ -8,3 +8,4 @@ state/
 data/live_pool.jsonl
 /bin/orca-quote
 /orca_helper/target/
+flake.lock

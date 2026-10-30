@@ -1,0 +1,167 @@
+{
+  "checked_at": "2026-10-30",
+  "endpoint": "https://api.mainnet-beta.solana.com",
+  "interval_seconds": 2,
+  "tip_start": 463447241,
+  "tip_end": 463447279,
+  "elapsed_seconds": 7.995859296002891,
+  "observed_slots_per_second": 4.7524598161696145,
+  "blocks": [
+    {
+      "slot": 463447225,
+      "transactions": 286,
+      "events": 8,
+      "decode_seconds": 0.0345,
+      "issues": {
+        "TradeEvent: payload 382 bytes, pinned fields 374, trailing 8; program 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P": 3,
+        "Truncated Borsh field": 8,
+        "Unreviewed event layout/version": 41,
+        "trade instruction/event mismatch": 41,
+        "BuyEvent: payload 489 bytes, pinned fields 481, trailing 8; program pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA": 8,
+        "SellEvent: payload 441 bytes, pinned fields 433, trailing 8; program pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA": 18,
+        "TradeEvent: payload 397 bytes, pinned fields 389, trailing 8; program 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P": 1,
+        "BuyEvent: payload 507 bytes, pinned fields 499, trailing 8; program pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA": 3,
+        "BuyEvent: payload 504 bytes, pinned fields 496, trailing 8; program pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA": 7,
+        "TradeEvent: payload 383 bytes, pinned fields 375, trailing 8; program 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P": 2
+      }
+    },
+    {
+      "slot": 463447226,
+      "transactions": 263,
+      "events": 0,
+      "decode_seconds": 0.024,
+      "issues": {
+        "BuyEvent: payload 504 bytes, pinned fields 496, trailing 8; program pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA": 5,
+        "Truncated Borsh field": 6,
+        "Unreviewed event layout/version": 27,
+        "trade instruction/event mismatch": 26,
+        "SellEvent: payload 441 bytes, pinned fields 433, trailing 8; program pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA": 14,
+        "TradeEvent: payload 383 bytes, pinned fields 375, trailing 8; program 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P": 2,
+        "TradeEvent: payload 382 bytes, pinned fields 374, trailing 8; program 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P": 2,
+        "TradeEvent: payload 397 bytes, pinned fields 389, trailing 8; program 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P": 2,
+        "TradeEvent: payload 393 bytes, pinned fields 385, trailing 8; program 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P": 1,
+        "Unsupported Borsh type": 1,
+        "BuyEvent: payload 489 bytes, pinned fields 481, trailing 8; program pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA": 4
+      }
+    }
+  ],
+  "calls": [
+    {
+      "method": "getSlot",
+      "seconds": 0.135,
+      "bytes": 44
+    },
+    {
+      "method": "getBlocks",
+      "seconds": 0.1383,
+      "bytes": 56
+    },
+    {
+      "method": "getBlock",
+      "seconds": 0.5647,
+      "bytes": 2116731
+    },
+    {
+      "method": "getBlock",
+      "seconds": 0.431,
+      "bytes": 1801377
+    },
+    {
+      "method": "getSlot",
+      "seconds": 0.1304,
+      "bytes": 44
+    }
+  ],
+  "offline_decoder_recheck": [
+    {
+      "slot": 463447225,
+      "transactions": 286,
+      "accepted_event_kinds": {
+        "lifecycle": 8
+      },
+      "decode_seconds": 0.015350050991401076,
+      "issue_counts": {
+        "TradeEvent: payload 382 bytes, pinned fields 374, trailing 8; program 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P": 3,
+        "Truncated Borsh field": 8,
+        "Unreviewed event layout/version": 41,
+        "trade instruction/event mismatch": 41,
+        "BuyEvent: payload 489 bytes, pinned fields 481, trailing 8; program pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA": 8,
+        "SellEvent: payload 441 bytes, pinned fields 433, trailing 8; program pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA": 18,
+        "TradeEvent: payload 397 bytes, pinned fields 389, trailing 8; program 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P": 1,
+        "BuyEvent: payload 507 bytes, pinned fields 499, trailing 8; program pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA": 3,
+        "BuyEvent: payload 504 bytes, pinned fields 496, trailing 8; program pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA": 7,
+        "TradeEvent: payload 383 bytes, pinned fields 375, trailing 8; program 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P": 2
+      },
+      "example_quarantined_signatures": [
+        "53x9Gvqmo45c3mFfqQX6XbXyTSLvA6ELdexxakZ6emcjHYaJvrXvAqTUnKEXFe5zEvzztUDtNbeMBeAMXviw4jQq",
+        "3x867ifv82PfZ1XsoGQF7S3q2PtbZCoWLBAWkPSsL8N3ydkGeL85RGQRneEVzgBbM3FDCXcjPDBkrmy5QQgKJEkE"
+      ]
+    },
+    {
+      "slot": 463447226,
+      "transactions": 263,
+      "accepted_event_kinds": {},
+      "decode_seconds": 0.011233820987399668,
+      "issue_counts": {
+        "BuyEvent: payload 504 bytes, pinned fields 496, trailing 8; program pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA": 5,
+        "Truncated Borsh field": 6,
+        "Unreviewed event layout/version": 27,
+        "trade instruction/event mismatch": 26,
+        "SellEvent: payload 441 bytes, pinned fields 433, trailing 8; program pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA": 14,
+        "TradeEvent: payload 383 bytes, pinned fields 375, trailing 8; program 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P": 2,
+        "TradeEvent: payload 382 bytes, pinned fields 374, trailing 8; program 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P": 2,
+        "TradeEvent: payload 397 bytes, pinned fields 389, trailing 8; program 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P": 2,
+        "TradeEvent: payload 393 bytes, pinned fields 385, trailing 8; program 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P": 1,
+        "Unsupported Borsh type": 1,
+        "BuyEvent: payload 489 bytes, pinned fields 481, trailing 8; program pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA": 4
+      },
+      "example_quarantined_signatures": [
+        "5yx3RdKGEB3gnSJEt7u7kVQ1fBxF5twM5dhsEHRGy7jReJi7dqDHE8tFBV3sD1kpg9HPQEoXXL83RxRgsKjHTYSs",
+        "49mSuydTq1GVni9XPuunKErdFmXPzqLUTQSiBRbdpijzWRkBKU7nbb3KSh8wSNJotuiDVo6X1hBbipQ3FaxU7db4"
+      ]
+    }
+  ],
+  "notes": [
+    "Read-only public RPC probe only; no data imported into paper, live, training or evaluation databases.",
+    "Finalized-head rate is an approximately eight-second sample and includes publication jitter, not a sustained slot-rate claim.",
+    "Original first probe used cold decoder construction per transaction; this retained measurement uses one shared decoder."
+  ],
+  "real_complete_hourly_windows_demonstrated": 0,
+  "sustained_rpc_bounds": {
+    "default_2_second_pacing_blocks_per_second_at_64_slot_batch": 0.45714285714285713,
+    "shared_half_second_floor_blocks_per_second_at_64_slot_batch": 1.8285714285714285,
+    "assumption": "all slots produced; 64 block calls plus getSlot, four deployment reads and getBlocks per batch; excludes decoding and transfer time"
+  },
+  "focused_tests": {
+    "indexer": 30,
+    "meme_learning": 12,
+    "pump_market": 5,
+    "data_compliance": 8,
+    "chart_learning": 4,
+    "meme_live": 36,
+    "evaluation_recovery": 7,
+    "total": 102,
+    "passed": true,
+    "whole_suite_run": false
+  },
+  "nix_validation": {
+    "syntax": "PASS",
+    "lock_generated": true,
+    "package_evaluation_platforms": [
+      "aarch64-darwin",
+      "aarch64-linux",
+      "x86_64-darwin",
+      "x86_64-linux"
+    ],
+    "nixos_services_evaluation": "PASS",
+    "service_assertions_failed": 0,
+    "paper_service_shell_syntax": "PASS",
+    "full_build": "NOT RUN; no installed Nix build environment",
+    "services_started": false
+  },
+  "rights": {
+    "operational_rpc_storage": "UNKNOWN until configured operator review",
+    "ml": "UNKNOWN; not enabled",
+    "evaluation": "UNKNOWN; not enabled"
+  }
+}
