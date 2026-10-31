@@ -1,53 +1,125 @@
-"""UNTESTED bounded, offline unified ML worker. No order/RPC capabilities."""
+
+"""Command-line runner for unified SVM, LSTM and historical retrieval.
+
+Runs without network access or wallet permissions.
+Does not submit transactions.
+"""
 import argparse
 import json
 from pathlib import Path
-import time
+
 from unified_observations import ObservationStore
-from unified_learning import build_candidate, load_candidate, forecast, evaluate_candidate
+from unified_learning import (
+    build_candidate,
+    load_candidate,
+    forecast,
+    evaluate_candidate,
+)
+
+
+MAX_INPUT_BYTES = 1_000_000
+MAX_IMPORT_ROWS = 1024
+
+
+def load_json(path):
+    with Path(path).open("rb") as stream:
+        content = stream.read(MAX_INPUT_BYTES + 1)
+    if len(content) > MAX_INPUT_BYTES:
+        raise ValueError("Input file too large")
+    return json.loads(content)
+
+
+def import_jsonl(store, path):
+    count = 0
+    with Path(path).open("rb") as stream:
+        for line in stream:
+            if not line.strip():
+                continue
+            if len(line) > 65536 or count >= MAX_IMPORT_ROWS:
+                raise ValueError("Import batch limit exceeded")
+            row = json.loads(line)
+            store.add(row)
+            count += 1
+    return count
 
 
 def main():
-    parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--db',type=Path,required=True)
-    parser.add_argument('--initialize',action='store_true')
-    parser.add_argument('--input',type=Path,help='Reviewed normalized JSONL, maximum 1024 records per pass')
-    parser.add_argument('--status',action='store_true')
-    parser.add_argument('--train',choices=['svm','lstm','rag','all'])
-    parser.add_argument('--candidate',help='Frozen candidate ID for inference/evaluation')
-    parser.add_argument('--forecast-input',type=Path,help='JSON containing observations and position_id')
-    parser.add_argument('--evaluation-input',type=Path,help='Verified confirmed outcomes/failures JSON')
-    args=parser.parse_args()
-    store=ObservationStore(args.db,create=args.initialize)
-    imported=0
-    if args.input:
-        with args.input.open('rb') as stream:
-            for index in range(1025):
-                line=stream.readline(65538)
-                if not line:break
-                if index>=1024 or len(line)>65537:raise ValueError('Input record/byte budget exceeded; use a new reviewed batch')
-                store.add(json.loads(line));imported+=1
-    reports={}
-    for family in ('svm','lstm','rag') if args.train=='all' else [args.train] if args.train else []:
-        candidate=build_candidate(store,family)
-        reports[family]={key:candidate[key] for key in ('id','status','reason','historical_evaluation') if key in candidate}
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--db", type=Path, required=True)
+    parser.add_argument("--initialize", action="store_true")
+    parser.add_argument("--input", type=Path)
+    parser.add_argument("--status", action="store_true")
+    parser.add_argument(
+        "--train", choices=("svm", "lstm", "rag", "all")
+    )
+    parser.add_argument("--candidate")
+    parser.add_argument("--forecast-input", type=Path)
+    parser.add_argument("--evaluation-input", type=Path)
+    args = parser.parse_args()
+
+    store = ObservationStore(args.db, create=args.initialize)
+    imported = import_jsonl(store, args.input) if args.input else 0
+
+    report = {
+        "imported": imported,
+        "models": {},
+        "order_authorization": False,
+    }
+
+    if args.train:
+        families = (
+            ("svm", "lstm", "rag")
+            if args.train == "all" else (args.train,)
+        )
+        for family in families:
+            candidate = build_candidate(store, family)
+            report["models"][family] = {
+                key: candidate[key]
+                for key in (
+                    "id", "status", "reason", "historical_evaluation"
+                )
+                if key in candidate
+            }
+
     if args.status:
         with store.connect(readonly=True) as db:
-            reports['status']={'observations':db.execute('SELECT count(*) FROM observations').fetchone()[0],
-                               'revocations':db.execute('SELECT count(*) FROM revocations').fetchone()[0],
-                               'models':[row[0] for row in db.execute('SELECT id FROM models ORDER BY id LIMIT 100')]}
-    output={'imported':imported,'models':reports,'order_authorization':False}
-    for mode,path in [('forecast',args.forecast_input),('evaluation',args.evaluation_input)]:
-        if path:
-            if not args.candidate:parser.error('--candidate required')
-            with path.open('rb') as stream:raw=stream.read(1000001)
-            if len(raw)>1000000:raise ValueError('Decision/evaluation input exceeds byte budget')
-            value=json.loads(raw)
-            if mode=='forecast':output[mode]=forecast(store,args.candidate,value['observations'],value['position_id'])
-            else:
-                if len(value.get('outcomes',[]))>1024 or len(value.get('failures',[]))>1024:raise ValueError('Evaluation count budget exceeded')
-                output[mode]=evaluate_candidate(store,args.candidate,value['outcomes'],value.get('failures',[]))
-    print(json.dumps(output,allow_nan=False))
+            report["status"] = {
+                "observations": db.execute(
+                    "SELECT COUNT(*) FROM observations"
+                ).fetchone()[0],
+                "revocations": db.execute(
+                    "SELECT COUNT(*) FROM revocations"
+                ).fetchone()[0],
+                "models": [
+                    row[0] for row in db.execute(
+                        "SELECT id FROM models ORDER BY id LIMIT 100"
+                    )
+                ],
+            }
+
+    if args.forecast_input:
+        if not args.candidate:
+            parser.error("--candidate required for forecasting")
+        payload = load_json(args.forecast_input)
+        report["forecast"] = forecast(
+            store, args.candidate,
+            payload["observations"], payload["position_id"]
+        )
+
+    if args.evaluation_input:
+        if not args.candidate:
+            parser.error("--candidate required for evaluation")
+        payload = load_json(args.evaluation_input)
+        outcomes = payload.get("outcomes", [])
+        failures = payload.get("failures", [])
+        if len(outcomes) > 1024 or len(failures) > 1024:
+            raise ValueError("Evaluation batch limit exceeded")
+        report["evaluation"] = evaluate_candidate(
+            store, args.candidate, outcomes, failures
+        )
+
+    print(json.dumps(report, sort_keys=True, allow_nan=False))
 
 
-if __name__=='__main__':main()
+if __name__ == "__main__":
+    main()
