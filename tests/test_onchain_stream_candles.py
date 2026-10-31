@@ -82,13 +82,19 @@ class IncrementalTests(unittest.TestCase):
         self.store.register_source('stream-fixture',{**fixtures.POLICY,'stream_verified':True})
         hints=StreamHints(self.store,'stream-fixture',capacity=10)
         class Socket:
-            async def __aenter__(self):return self
+            async def __aenter__(self):
+                from solders.signature import Signature
+                self.messages=iter([
+                    {'jsonrpc':'2.0','id':1,'result':11},
+                    {'jsonrpc':'2.0','id':2,'result':12},
+                    {'jsonrpc':'2.0','method':'logsNotification','params':{'subscription':11,'result':{'context':{'slot':20},'value':{'signature':str(Signature.default()),'err':None,'logs':[]}}}}])
+                return self
             async def __aexit__(self,*args):pass
             async def send(self,value):pass
-            async def messages(self):
-                yield json.dumps({'method':'logsNotification','params':{'result':{'context':{'slot':20},'value':{'signature':'same','err':None}}}})
-                raise OSError('disconnect')
-            def __aiter__(self):return self.messages()
+            async def recv(self):
+                value=next(self.messages,None)
+                if value is None:raise OSError('disconnect')
+                return json.dumps(value)
         before=self.store.metrics()['events']
         async def run():
             with patch('onchain_stream.websockets.connect',return_value=Socket()) as connect, patch('onchain_stream.asyncio.to_thread',new_callable=AsyncMock), patch('onchain_stream.asyncio.sleep',new_callable=AsyncMock):

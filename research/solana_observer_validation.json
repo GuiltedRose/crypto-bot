@@ -1,0 +1,13 @@
+{
+  "status": "NOT_RUN_AT_USER_REQUEST",
+  "tests_executed": false,
+  "build_executed": false,
+  "observer_executed": false,
+  "network_probes_executed": false,
+  "measured_throughput": null,
+  "real_hour_verified": false,
+  "independent_feed_verified": false,
+  "source_rights_verified": false,
+  "live_execution_enabled": false,
+  "instructions": "docs/solana_observer.md"
+}

@@ -197,3 +197,7 @@ reviewed, independently validated event-time USD source; establish an authorized
 infrastructure budget that keeps up; prove a complete real hourly window and
 replay its candles/volume; then demonstrate paper processing of those observations.
 Synthetic fixture tests and passing regression tests do not establish these facts.
+
+The maintained Python subscription entry point and operator-run validation steps
+are documented in [Python Solana observer](solana_observer.md). This integration
+and its new tests have not been executed; use an isolated database.

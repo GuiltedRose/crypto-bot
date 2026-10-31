@@ -76,12 +76,15 @@
                 --add-flags "$out/share/crypto-bot/run_onchain_indexer.py"
               makeWrapper ${python}/bin/python $out/bin/crypto-bot-paper \
                 --add-flags "$out/share/crypto-bot/run_paper.py"
+              makeWrapper ${python}/bin/python $out/bin/crypto-bot-observer \
+                --add-flags "$out/share/crypto-bot/solana_observer.py"
             '';
           };
         });
       apps = eachSystem (system: {
         default = self.apps.${system}.indexer;
         indexer = { type = "app"; program = "${self.packages.${system}.default}/bin/crypto-bot-indexer"; };
+        observer = { type = "app"; program = "${self.packages.${system}.default}/bin/crypto-bot-observer"; };
         tmux = { type = "app"; program = "${environments.${system}.pkgs.tmux}/bin/tmux"; };
         paper = { type = "app"; program = "${self.packages.${system}.default}/bin/crypto-bot-paper"; };
       });
@@ -98,6 +101,7 @@
           python -m unittest discover -s tests -p test_onchain_hour.py
           python -m unittest discover -s tests -p test_onchain_stream_candles.py
           python -m unittest discover -s tests -p test_selfhost_observer.py
+          python -m unittest discover -s tests -p test_solana_observer.py
           touch $out
         ''; });
       nixosModules.default = { config, lib, pkgs, ... }:
