@@ -81,6 +81,8 @@
                 --add-flags "$out/share/crypto-bot/run_onchain_indexer.py"
               makeWrapper ${python}/bin/python $out/bin/crypto-bot-paper \
                 --add-flags "$out/share/crypto-bot/run_paper.py"
+              makeWrapper ${python}/bin/python $out/bin/crypto-bot-unified-learning \
+                --add-flags "$out/share/crypto-bot/run_unified_learning.py"
               makeWrapper ${python}/bin/python $out/bin/crypto-bot-network-budget \
                 --add-flags "$out/share/crypto-bot/solana_network_budget.py"
               makeWrapper ${python}/bin/python $out/bin/crypto-bot-observer \
@@ -144,6 +146,13 @@
         ''; } // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
           solana-network-lifecycle = import ./tests/nix/solana-network-lifecycle.nix { inherit pkgs; };
         });
+      nixosModules.observer-workflows = { config, lib, pkgs, ... }: {
+        imports = [ self.nixosModules.solana-budget-isolation
+          (import ./nix/observer-workflows.nix {
+            inherit config lib pkgs;
+            package = self.packages.${pkgs.stdenv.hostPlatform.system}.native-rpc-app;
+          }) ];
+      };
       nixosModules.solana-budget-isolation = import ./nix/solana-network-isolation.nix;
       nixosModules.default = { config, lib, pkgs, ... }:
         import ./nix/module.nix {
