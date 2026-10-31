@@ -34,9 +34,9 @@ class CompleteTransportTests(unittest.TestCase):
         with LocalRpcServer() as server,patch('solana_rpc_compat.check_boundary',return_value=os.stat('/proc/self/ns/net').st_ino),self.setup_rpc(server.url) as native:
             server.script=[{'chunked':True}]
             self.assertEqual(native.call('getSlot',[]),7)
-            for fault,error in [({'status':403},SourceAccessBlocked),({'status':429},ValueError),
+            for fault,error in [({'status':403},SourceAccessBlocked),({'status':403,'encoding':'gzip','body':b'not-gzip'},SourceAccessBlocked),({'status':429},ValueError),
                                 ({'status':503},ConnectionError),({'status':302,'redirect':True},ValueError),
-                                ({'body':'not-json'},SourceAccessBlocked),({'body':'{"jsonrpc":"2.0","id":2,"result":1}'},SourceAccessBlocked),
+                                ({'body':'not-json'},SourceAccessBlocked),({'body':b'\xff'},SourceAccessBlocked),({'body':'{"jsonrpc":"2.0","id":2,"result":1}'},SourceAccessBlocked),
                                 ({'declared_length':64000001},SourceAccessBlocked),({'encoding':'gzip'},SourceAccessBlocked)]:
                 with self.subTest(fault=fault):
                     server.script=[fault]

@@ -40,7 +40,7 @@ fn url(value: &str, websocket: bool, loopback: bool) -> PyResult<reqwest::Url> {
 }
 
 fn request(method: &str, params: &str) -> PyResult<String> {
-    if !["getGenesisHash","getSlot","getBlocks","getBlock","getAccountInfo","getBlockTime","getSignaturesForAddress","getTransaction"].contains(&method) {
+    if !["getGenesisHash","getSlot","getBlocks","getBlock","getAccountInfo","getBlockTime","getSignaturesForAddress","getTransaction","getFirstAvailableBlock","minimumLedgerSlot","getHealth","getVersion"].contains(&method) {
         return Err(bad("read-only method allowlist violation"));
     }
     if params.len()>65536 { return Err(bad("request too large")); }
@@ -73,6 +73,7 @@ impl NativeHttp {
                         .header("Accept-Encoding","identity").body(body).send().await.map_err(|_|offline())?;
                     let status=response.status().as_u16();
                     let retry=response.headers().get("retry-after").and_then(|v|v.to_str().ok()).unwrap_or("").chars().take(256).collect::<String>();
+                    if status!=200 {return Ok((status,retry,String::new()));}
                     if response.content_length().is_some_and(|n|n>64_000_000) {return Err(bad("oversized response"));}
                     let encoding=response.headers().get("content-encoding").and_then(|v|v.to_str().ok()).unwrap_or("identity");
                     if encoding!="identity" {return Err(bad("native response requires identity encoding"));}

@@ -2,7 +2,7 @@
 
 Not a validator, shred decoder or Geyser implementation. No external fallback.
 """
-from solana_rpc_compat import make_rpc
+from solana_rpc_compat import make_rpc, close_rpc_clients
 import argparse
 import ipaddress
 import json
@@ -61,12 +61,15 @@ def main():
     for market in markets:
         engine.watch(market['mint'], market['pool'])
     ingester = Ingester(store, [make_rpc(e) for e in endpoints], config.get('reviewed_program_versions'))
-    start = None if store.next_slot() is not None else args.start_slot
-    results = follow(ingester, start, args.batch_slots) if args.loop else [ingester.step(start, args.batch_slots)]
-    for result in results:
-        result.update(mode='local_replay_node_bridge', independent_feed_proven=False,
-                      external_market_rpc_fallback=False, candles=engine.sync())
-        print(json.dumps(result), flush=True)
+    try:
+        start = None if store.next_slot() is not None else args.start_slot
+        results = follow(ingester, start, args.batch_slots) if args.loop else [ingester.step(start, args.batch_slots)]
+        for result in results:
+            result.update(mode='local_replay_node_bridge', independent_feed_proven=False,
+                          external_market_rpc_fallback=False, candles=engine.sync())
+            print(json.dumps(result), flush=True)
+    finally:
+        close_rpc_clients(ingester.endpoints)
 
 
 if __name__ == '__main__':

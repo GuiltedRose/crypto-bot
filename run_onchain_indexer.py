@@ -1,5 +1,5 @@
 """Read-only finalized Pump indexer and local market shadow report."""
-from solana_rpc_compat import make_rpc
+from solana_rpc_compat import make_rpc, close_rpc_clients
 import argparse
 import json
 from pathlib import Path
@@ -45,38 +45,41 @@ def main():
             continue
         store.register_source(endpoint['source_id'], endpoint['policy'])
         endpoints.append(make_rpc(endpoint))
-    if args.capture_sol_usd:
-        if not endpoints:
-            parser.error('A reviewed enabled RPC endpoint is required')
-        from onchain_oracle import capture_sol, import_sol
-        print(json.dumps(import_sol(store, capture_sol(endpoints[0]))))
-        return
-    ingester = Ingester(store, endpoints, config.get('reviewed_program_versions'))
-    start = args.start_slot if store.next_slot() is None else None
-    candles=None
-    markets=config.get('markets',[])
-    if len(markets)>32:parser.error('At most 32 explicitly configured candle markets')
-    if markets:
-        from onchain_candles import CandleEngine
-        candles=CandleEngine(store)
-        for market in markets:candles.watch(market['mint'],market['pool'])
-    if args.stream:
-        if not args.loop or not candles:parser.error('--stream requires --loop and configured markets')
-        import asyncio
-        from onchain_stream import run_stream
-        endpoint=next(e for e in config['endpoints'] if e.get('enabled') is True)
-        if store.policy(endpoint['source_id']).get('stream_verified') is not True:
-            parser.error('Explicit reviewed stream policy required; no stream started')
-        asyncio.run(run_stream(ingester,endpoint,start,candles,args.batch_slots,args.interval))
-        return
-    if args.loop:
-        for result in follow(ingester, start, args.batch_slots, args.interval, max_catchup_slots=args.max_catchup_slots):
+    try:
+        if args.capture_sol_usd:
+            if not endpoints:
+                parser.error('A reviewed enabled RPC endpoint is required')
+            from onchain_oracle import capture_sol, import_sol
+            print(json.dumps(import_sol(store, capture_sol(endpoints[0]))))
+            return
+        ingester = Ingester(store, endpoints, config.get('reviewed_program_versions'))
+        start = args.start_slot if store.next_slot() is None else None
+        candles=None
+        markets=config.get('markets',[])
+        if len(markets)>32:parser.error('At most 32 explicitly configured candle markets')
+        if markets:
+            from onchain_candles import CandleEngine
+            candles=CandleEngine(store)
+            for market in markets:candles.watch(market['mint'],market['pool'])
+        if args.stream:
+            if not args.loop or not candles:parser.error('--stream requires --loop and configured markets')
+            import asyncio
+            from onchain_stream import run_stream
+            endpoint=next(e for e in config['endpoints'] if e.get('enabled') is True)
+            if store.policy(endpoint['source_id']).get('stream_verified') is not True:
+                parser.error('Explicit reviewed stream policy required; no stream started')
+            asyncio.run(run_stream(ingester,endpoint,start,candles,args.batch_slots,args.interval))
+            return
+        if args.loop:
+            for result in follow(ingester, start, args.batch_slots, args.interval, max_catchup_slots=args.max_catchup_slots):
+                if candles:result['candles']=candles.sync()
+                print(json.dumps(result), flush=True)
+        else:
+            result=ingester.step(start,args.batch_slots)
             if candles:result['candles']=candles.sync()
-            print(json.dumps(result), flush=True)
-    else:
-        result=ingester.step(start,args.batch_slots)
-        if candles:result['candles']=candles.sync()
-        print(json.dumps(result))
+            print(json.dumps(result))
+    finally:
+        close_rpc_clients(endpoints)
 
 
 if __name__ == '__main__':

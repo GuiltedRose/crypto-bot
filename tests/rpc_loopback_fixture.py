@@ -10,6 +10,7 @@ from wallet_watch import MAINNET
 
 RESULTS={'getGenesisHash':MAINNET, 'getSlot':7,'getBlocks':[5,6,7],
          'getBlock':{'transactions':[],'parentSlot':6},'getAccountInfo':{'value':None},
+         'getFirstAvailableBlock':0,'minimumLedgerSlot':0,'getHealth':'ok','getVersion':{'solana-core':'fixture'},
          'getBlockTime':1000,'getSignaturesForAddress':[],'getTransaction':None}
 
 
@@ -40,7 +41,8 @@ class LocalRpcServer:
                     step=owner.script.pop(0) if owner.script else {}
                 if step.get('disconnect'):
                     self.connection.shutdown(socket.SHUT_RDWR);self.connection.close();return
-                body=step.get('body',json.dumps({'jsonrpc':'2.0','id':1,'result':RESULTS.get(value['method'])})).encode()
+                payload=step.get('body',json.dumps({'jsonrpc':'2.0','id':1,'result':RESULTS.get(value['method'])}))
+                body=payload.encode() if isinstance(payload,str) else payload
                 self.send_response(step.get('status',200))
                 self.send_header('Retry-After','60')
                 self.send_header('Content-Type','application/json')

@@ -7,6 +7,7 @@ import zlib
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, build_opener
+from rpc_contract import RpcHistoryUnavailable, RpcEvidenceError, response_value, remote_error, http_error
 from data_policy import SourceAccessBlocked
 from provider_limits import BUDGET
 from pump_narratives import NoRedirect
@@ -14,7 +15,8 @@ from wallet_watch import MAINNET, PublicRpcError
 from onchain_decode import Decoder
 
 READ_METHODS = {'getGenesisHash', 'getSlot', 'getBlocks', 'getBlock',
-                'getAccountInfo', 'getBlockTime', 'getSignaturesForAddress', 'getTransaction'}
+                'getAccountInfo', 'getBlockTime', 'getSignaturesForAddress', 'getTransaction',
+                'getFirstAvailableBlock', 'minimumLedgerSlot', 'getHealth', 'getVersion'}
 
 
 def decode_rpc_body(raw, encoding, max_bytes=64_000_000):
@@ -35,6 +37,7 @@ def decode_rpc_body(raw, encoding, max_bytes=64_000_000):
 
 
 class IndexRpc:
+    supports_history_probe = True
     def __init__(self, endpoint, budget=None):
         self.url = endpoint['url']
         parsed = urlparse(self.url)
@@ -67,9 +70,7 @@ class IndexRpc:
         except HTTPError as error:
             self.budget.failure(self.url, error.code, error.headers)
             # Do not expose endpoint paths, which may contain credentials.
-            if error.code in (401, 403):
-                raise SourceAccessBlocked('RPC access denied; review authorization') from None
-            raise ValueError('RPC HTTP error ' + str(error.code)) from None
+            raise http_error(error.code,self.source) from None
         except (URLError, TimeoutError, OSError):
             self.budget.failure(self.url, 503)
             raise ConnectionError('RPC transport unavailable') from None
@@ -84,9 +85,9 @@ class IndexRpc:
                 raise SourceAccessBlocked('RPC access denied; review authorization')
             if code in (429, -32005):
                 self.budget.failure(self.url, 429 if code == 429 else 503)
-            raise PublicRpcError(code)
+            raise remote_error(code,self.source)
         self.budget.success(self.url)
-        return payload['result']
+        return response_value(method,payload['result'],self.source)
 
     def validate(self):
         if not self.validated:
@@ -156,15 +157,25 @@ class Ingester:
             try:
                 rpc.validate()
                 finalized = rpc.call('getSlot', [{'commitment': 'finalized'}])
+                if type(finalized) is not int or finalized<0:
+                    raise RpcEvidenceError('Invalid finalized head')
                 sampled_at = time.time()
                 end = min(start + count - 1, finalized)
                 if end < start:
                     return self.record_progress(finalized, sampled_at, initial, started, 'caught_up')
+                if getattr(rpc,'supports_history_probe',False) is True:
+                    first=rpc.call('getFirstAvailableBlock',[])
+                    if type(first) is not int or first<0:raise RpcEvidenceError('Invalid history floor')
+                    if start<first:raise RpcHistoryUnavailable(rpc.source)
                 deployments = self.deployments(rpc)
                 slots = rpc.call('getBlocks', [start, end, {'commitment': 'finalized'}])
                 if not isinstance(slots, list) or slots != sorted(set(slots)) or any(
                         type(slot) is not int or not start <= slot <= end for slot in slots):
                     raise ValueError('Invalid finalized slot manifest')
+                if getattr(rpc,'supports_history_probe',False) is True:
+                    first=rpc.call('getFirstAvailableBlock',[])
+                    if type(first) is not int or first<0:raise RpcEvidenceError('Invalid history floor')
+                    if start<first:raise RpcHistoryUnavailable(rpc.source)
                 next_slot = start
                 for slot in slots:
                     block = rpc.call('getBlock', [slot, {'commitment': 'finalized', 'encoding': 'json',
@@ -191,7 +202,11 @@ class Ingester:
                 if next_slot <= end:
                     self.store.commit_range(next_slot, end, [], [], rpc.source)
                 return self.record_progress(finalized, sampled_at, initial, started, 'indexed')
-            except ConnectionError:
+            except ConnectionError as error:
+                print(json.dumps({'status':'rpc_source_unavailable','source_id':rpc.source,
+                                  'category':getattr(error,'category','transport_unavailable'),
+                                  'next_source_id':self.endpoints[index+1].source if index+1<len(self.endpoints) else None,
+                                  'checkpoint':self.store.next_slot()}),flush=True)
                 if index + 1 == len(self.endpoints):
                     raise
         raise ValueError('No authorized endpoint available')

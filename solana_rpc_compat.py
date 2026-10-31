@@ -9,6 +9,7 @@ import threading
 from data_policy import SourceAccessBlocked, require_permitted_url
 from onchain_ingest import IndexRpc, READ_METHODS
 from wallet_watch import PublicRpcError
+from rpc_contract import response_value, remote_error, http_error
 
 
 def native_module():
@@ -88,7 +89,7 @@ class RustIndexRpc(IndexRpc):
         self.requests+=1
         try: response=await transport.request(method,text)
         except (ConnectionError,ValueError) as error: self._transport_error(error)
-        return self._finish(*response)
+        return self._finish(*response,method=method)
 
     def call(self,method,params):
         try: asyncio.get_running_loop()
@@ -102,7 +103,7 @@ class RustIndexRpc(IndexRpc):
         self.requests+=1
         try: response=transport.request_sync(method,text)
         except (ConnectionError,ValueError) as error: self._transport_error(error)
-        return self._finish(*response)
+        return self._finish(*response,method=method)
 
     def close(self):
         with self._transport_lock:
@@ -113,12 +114,10 @@ class RustIndexRpc(IndexRpc):
     def __enter__(self): return self
     def __exit__(self,*_): self.close()
 
-    def _finish(self,status,retry,text):
+    def _finish(self,status,retry,text,method=None):
         if status!=200:
             self.budget.failure(self.url,status,{'Retry-After':retry} if retry else {})
-            if status in (401,403): raise SourceAccessBlocked('RPC access denied')
-            if status in (500,502,503,504): raise ConnectionError('RPC provider unavailable')
-            raise ValueError('RPC HTTP error '+str(status))
+            raise http_error(status,self.source)
         size=len(text.encode())
         self.wire_bytes+=size; self.decoded_bytes+=size
         try:
@@ -131,7 +130,7 @@ class RustIndexRpc(IndexRpc):
                 if not isinstance(error,dict) or type(error.get('code')) is not int: raise ValueError('Invalid RPC error')
             else:
                 self.budget.success(self.url)
-                return result['result']
+                return response_value(method,result['result'],self.source)
         except (ValueError,TypeError,RecursionError):
             raise SourceAccessBlocked('Malformed RPC evidence; no backend retry') from None
         code=result['error']['code']
@@ -139,11 +138,20 @@ class RustIndexRpc(IndexRpc):
             self.budget.failure(self.url,code)
             raise SourceAccessBlocked('RPC source access denied')
         if code in (429,-32005): self.budget.failure(self.url,429 if code==429 else 503)
-        raise PublicRpcError(code)
+        raise remote_error(code,self.source)
     def decode_binary(self,response,*,tx_index,commitment):
         from solana_binary_ingest import ingest_rpc_response
         return ingest_rpc_response(response,source_id=self.source,policy=self.endpoint['policy'],
                                    tx_index=tx_index,commitment=commitment,backend='rust')
+
+
+def close_rpc_clients(clients):
+    """Close every owned client even if one cleanup raises; never resets state."""
+    from contextlib import ExitStack
+    with ExitStack() as stack:
+        for client in clients:
+            close=getattr(client,'close',None)
+            if callable(close):stack.callback(close)
 
 
 def make_rpc(endpoint,budget=None):
@@ -161,7 +169,11 @@ def stream_connector(endpoint,python_connector):
     if backend in ('python','auto'): return python_connector
     if backend!='rust': raise ValueError('Unknown WS backend')
     class Connector:
-        def __init__(self,url,**_): self.url=url; self.socket=None
+        def __init__(self,url,**options):
+            supported={'max_queue':32,'max_size':2000000,'open_timeout':15,'ping_interval':20,'ping_timeout':20}
+            if any(key not in supported or value!=supported[key] for key,value in options.items()):
+                raise ValueError('Unsupported native WebSocket option; bounds are explicit and fixed')
+            self.url=url; self.socket=None
         async def __aenter__(self):
             if self.url!=endpoint.get('ws_url') or endpoint.get('policy',{}).get('stream_verified') is not True:
                 raise SourceAccessBlocked('Explicit authorized WebSocket source required')

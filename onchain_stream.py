@@ -12,6 +12,7 @@ import websockets
 from websockets.exceptions import WebSocketException, InvalidStatus
 from provider_limits import BUDGET, ProviderBackoff
 from data_policy import SourceAccessBlocked
+from rpc_contract import RpcEvidenceError
 from onchain_decode import Decoder
 
 
@@ -214,15 +215,18 @@ async def listen(endpoint, hints, wake, max_failures=6, connector=None):
                         notification=session.receive(message)
                     except (ValueError,KeyError,TypeError,RecursionError):
                         hints.count('malformed')
-                        raise
+                        raise RpcEvidenceError('Malformed subscription evidence; no source/backend retry') from None
                     hints.state('subscriptions',{'expected':len(mentions),'acknowledged':len(session.active)})
                     if len(session.active)==len(mentions):hints.state('connection','subscribed; observations provisional')
                     if notification and hints.accept(message):wake.set()
+        except asyncio.CancelledError:
+            hints.state('gap',{'reason':'stream cancelled; finalized recovery required','at':time.time()})
+            raise
         except ObservationCapacityExceeded:
             hints.state('gap','observation retention budget exhausted; stopped without pruning')
             raise
-        except SourceAccessBlocked:
-            hints.state('gap','stream authorization denied')
+        except SourceAccessBlocked as error:
+            hints.state('gap',{'reason':'stream source rejected','category':getattr(error,'category','authorization_denied'),'at':time.time()})
             raise
         except ProviderBackoff as error:
             await asyncio.sleep(error.seconds)
@@ -251,6 +255,9 @@ async def durable_work(function, *args):
 
 
 async def run_stream(ingester, endpoint, start, candles, batch=8, interval=5, connector=None, max_cycles=None):
+    from solana_rpc_compat import stream_connector
+    if connector is None:
+        connector=stream_connector(endpoint,websockets.connect)
     hints=StreamHints(ingester.store,endpoint['source_id'],
                       capacity=endpoint.get('pending_capacity',4096),
                       observation_limit=endpoint.get('observation_limit',100000))
@@ -273,7 +280,46 @@ async def run_stream(ingester, endpoint, start, candles, batch=8, interval=5, co
                 raise SourceAccessBlocked('Network budget unavailable or exhausted; explicit gap recorded') from None
     check_network_budget()
     wake=asyncio.Event()
-    listener=asyncio.create_task(listen(endpoint,hints,wake,connector=connector))
+    candidates=endpoint.get('stream_sources',[endpoint])
+    if not 1<=len(candidates)<=4: raise SourceAccessBlocked('Invalid bounded stream source set')
+    # Preflight cluster identity before concurrent streaming/recovery can race
+    # for a native client's single HTTP permit. Uses existing configured clients.
+    clients={rpc.source:rpc for rpc in getattr(ingester,'endpoints',[])}
+    approved=[]
+    for candidate in candidates:
+        rpc=clients.get(candidate['source_id'])
+        if len(candidates)>1:
+            rights=ingester.store.policy(candidate['source_id'])
+            validate_ws_endpoint(candidate)
+            if rpc is None or rights.get('stream_verified') is not True or candidate.get('policy')!=rights or candidate.get('network_budget')!=endpoint.get('network_budget'):
+                raise SourceAccessBlocked('Unapproved stream backup or inconsistent budget')
+        try:
+            if rpc is not None: await durable_work(rpc.validate)
+        except ConnectionError:
+            if len(candidates)==1: raise
+            hints.state('gap',{'reason':'stream source preflight unavailable','source_id':candidate['source_id']})
+            continue
+        except ProviderBackoff:
+            raise
+        except ValueError:
+            raise SourceAccessBlocked('Stream source genesis/provenance validation failed') from None
+        approved.append(candidate)
+    if not approved: raise ConnectionError('No approved stream source available')
+    async def supervise_stream():
+        for index,candidate in enumerate(approved):
+            current=StreamHints(ingester.store,candidate['source_id'],hints.capacity,hints.observation_limit)
+            selected=connector if candidate['source_id']==endpoint['source_id'] else stream_connector(candidate,websockets.connect)
+            current.state('active_source',candidate['source_id'])
+            try:
+                await listen(candidate,current,wake,connector=selected)
+                raise ConnectionError('Stream listener ended unexpectedly')
+            except ConnectionError:
+                if index+1==len(approved):raise
+                current.count('source_switches')
+                print(json.dumps({'status':'stream_source_switch','from_source':candidate['source_id'],'to_source':approved[index+1]['source_id']}),flush=True)
+                current.state('gap',{'reason':'bounded reconnect exhausted; explicit stream failover',
+                                     'from_source':candidate['source_id'],'to_source':approved[index+1]['source_id']})
+    listener=asyncio.create_task(supervise_stream())
     failures=0
     cycles=0
     try:
@@ -289,6 +335,7 @@ async def run_stream(ingester, endpoint, start, candles, batch=8, interval=5, co
                     if usage['pause_nonessential_writes']:
                         raise SourceAccessBlocked('Observer storage budget reached; ingestion paused, checkpoint preserved')
                 result=await durable_work(ingester.step,start,batch)
+                if listener.done(): listener.result() # never hide a final-batch stream failure
                 start=None if ingester.store.next_slot() is not None else start
                 failures=0;hints.recover();result['stream']=hints.report()
                 result['candles']=await durable_work(candles.sync)

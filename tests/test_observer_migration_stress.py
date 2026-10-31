@@ -86,6 +86,7 @@ class MigrationStressTests(unittest.TestCase):
                 with self.assertRaises(asyncio.CancelledError):await asyncio.wait_for(task,2)
         before=self.store.next_slot();asyncio.run(scenario())
         self.assertEqual(closed,[True]);self.assertEqual(self.store.next_slot(),before)
+        self.assertIn('gap',hints.report()['states'])
 
     def test_http_provider_error_burst_and_terminal_malformed_evidence(self):
         rpc=RustIndexRpc({'url':'https://fixture.invalid','source_id':'stream'},MagicMock())
