@@ -109,9 +109,12 @@ class RustIndexRpc(IndexRpc):
 
 def make_rpc(endpoint,budget=None):
     backend=endpoint.get('backend','python')
-    if backend in ('python','auto'): return IndexRpc(endpoint,budget)
-    if backend=='rust': return RustIndexRpc(endpoint,budget)
-    raise ValueError('Unknown RPC backend')
+    if backend in ('python','auto'): result=IndexRpc(endpoint,budget)
+    elif backend=='rust': result=RustIndexRpc(endpoint,budget)
+    else: raise ValueError('Unknown RPC backend')
+    result.event_backend=endpoint.get('event_backend','python')
+    if result.event_backend not in ('python','rust','compare'): raise ValueError('Unknown event backend')
+    return result
 
 
 def stream_connector(endpoint,python_connector):
@@ -145,3 +148,24 @@ def stream_connector(endpoint,python_connector):
             try: return await self.socket.recv()
             except ValueError: raise SourceAccessBlocked('Invalid native stream evidence') from None
     return Connector
+
+
+def extract_event_batch(transactions,*,slot,block_time,source_id,backend='python'):
+    """Compact unverified projection; receipt/version checks remain Ingester-owned."""
+    from onchain_decode import Decoder
+    if not isinstance(transactions,list) or len(transactions)>64: raise ValueError('Event batch exceeds 64 transactions')
+    if type(slot) is not int or slot<0 or type(block_time) is not int or not isinstance(source_id,str) or not source_id:
+        raise ValueError('Explicit batch context required')
+    decoder=Decoder(backend=backend)
+    events=[];issues=[]
+    for index,tx in enumerate(transactions):
+        try: found,errors=decoder.transaction(tx,slot,index,block_time)
+        except (ValueError,KeyError,TypeError,IndexError): found,errors=[],['malformed transaction evidence']
+        # A transaction with any ambiguous evidence contributes no compact events.
+        if errors: issues.append({'tx_index':index,'errors':errors})
+        else: events.extend(found)
+    columns=sorted({key for event in events for key in event})
+    return {'columns':columns,'rows':[[event.get(key) for key in columns] for event in events],
+            'presence':[[i for i,key in enumerate(columns) if key in event] for event in events],
+            'issues':issues,'source_id':source_id,'market_eligible':False,'execution_verified':False,
+            'requires_existing_ingester_validation':True}

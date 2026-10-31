@@ -89,46 +89,70 @@ impl NativeHttp {
 
 type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 #[pyclass]
-struct NativeSocket { socket: Arc<Mutex<Option<Socket>>>, busy: Arc<Semaphore>, inode: u64 }
+struct NativeSocket {
+    sink: Arc<Mutex<Option<futures_util::stream::SplitSink<Socket,Message>>>>,
+    stream: Arc<Mutex<Option<futures_util::stream::SplitStream<Socket>>>>,
+    send_busy: Arc<Semaphore>, recv_busy: Arc<Semaphore>,
+    stop: tokio::sync::watch::Sender<bool>, inode: u64,
+}
 #[pymethods]
 impl NativeSocket {
     fn send<'py>(&self, py: Python<'py>, text: String) -> PyResult<Bound<'py, PyAny>> {
         boundary(self.inode)?;
         if text.len()>65536 { return Err(bad("subscription too large")); }
-        let value: serde_json::Value=serde_json::from_str(&text).map_err(|_| bad("invalid subscription"))?;
+        let value:serde_json::Value=serde_json::from_str(&text).map_err(|_|bad("invalid subscription"))?;
         if value["jsonrpc"]!="2.0" || value["method"]!="logsSubscribe" { return Err(bad("only logsSubscribe is supported")); }
-        let socket=self.socket.clone();
-        let permit=self.busy.clone().try_acquire_owned().map_err(|_| PyRuntimeError::new_err("WS backpressure"))?;
+        let sink=self.sink.clone(); let mut stop=self.stop.subscribe();
+        let permit=self.send_busy.clone().try_acquire_owned().map_err(|_|PyRuntimeError::new_err("WS send backpressure"))?;
         pyo3_async_runtimes::tokio::future_into_py(py,async move {
             let _permit=permit;
-            let mut guard=socket.lock().await;
-            let ws=guard.as_mut().ok_or_else(offline)?;
-            tokio::time::timeout(Duration::from_secs(15),ws.send(Message::Text(text.into()))).await.map_err(|_| offline())?.map_err(|_| offline())?;
-            Ok(())
+            if *stop.borrow() { return Err(offline()); }
+            tokio::select! {
+                biased;
+                _=stop.changed()=>Err(offline()),
+                result=tokio::time::timeout(Duration::from_secs(15),async {
+                    let mut guard=sink.lock().await;
+                    guard.as_mut().ok_or_else(offline)?.send(Message::Text(text.into())).await.map_err(|_|offline())
+                })=>result.map_err(|_|offline())?,
+            }
         })
     }
     fn recv<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         boundary(self.inode)?;
-        let socket=self.socket.clone();
-        let permit=self.busy.clone().try_acquire_owned().map_err(|_| PyRuntimeError::new_err("WS backpressure"))?;
+        let stream=self.stream.clone(); let sink=self.sink.clone(); let mut stop=self.stop.subscribe();
+        let permit=self.recv_busy.clone().try_acquire_owned().map_err(|_|PyRuntimeError::new_err("WS receive backpressure"))?;
         pyo3_async_runtimes::tokio::future_into_py(py,async move {
             let _permit=permit;
-            let mut guard=socket.lock().await;
-            let ws=guard.as_mut().ok_or_else(offline)?;
-            for _ in 0..16 {
-                match tokio::time::timeout(Duration::from_secs(30),ws.next()).await.map_err(|_| offline())? {
-                    Some(Ok(Message::Text(text))) => return Ok(text.to_string()),
-                    Some(Ok(Message::Ping(data))) => tokio::time::timeout(Duration::from_secs(15),ws.send(Message::Pong(data))).await.map_err(|_| offline())?.map_err(|_| offline())?,
-                    Some(Ok(Message::Pong(_))) => (),
-                    _ => return Err(offline()),
-                }
+            if *stop.borrow() { return Err(offline()); }
+            tokio::select! {
+                biased;
+                _=stop.changed()=>Err(offline()),
+                result=tokio::time::timeout(Duration::from_secs(30),async {
+                    let mut guard=stream.lock().await;
+                    let ws=guard.as_mut().ok_or_else(offline)?;
+                    for _ in 0..16 {
+                        match ws.next().await {
+                            Some(Ok(Message::Text(text)))=>return Ok(text.to_string()),
+                            Some(Ok(Message::Ping(data)))=>{
+                                let mut output=sink.lock().await;
+                                output.as_mut().ok_or_else(offline)?.send(Message::Pong(data)).await.map_err(|_|offline())?;
+                            },
+                            Some(Ok(Message::Pong(_)))=>(),
+                            _=>return Err(offline()),
+                        }
+                    }
+                    Err(bad("excessive websocket control frames"))
+                })=>result.map_err(|_|offline())?,
             }
-            Err(bad("excessive websocket control frames"))
         })
     }
-    fn close<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let socket=self.socket.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py,async move { socket.lock().await.take(); Ok(()) })
+    fn close<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>> {
+        // Signal before constructing the awaitable: canceling close cannot undo it.
+        self.stop.send_replace(true);
+        let sink=self.sink.clone(); let stream=self.stream.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py,async move {
+            sink.lock().await.take(); stream.lock().await.take(); Ok(())
+        })
     }
 }
 
@@ -147,7 +171,12 @@ fn connect_ws<'py>(py: Python<'py>, endpoint: &str, namespace_inode: u64, allow_
             },
             _ => offline(),
         })?;
-        Python::with_gil(|py| Py::new(py,NativeSocket {socket:Arc::new(Mutex::new(Some(ws))),busy:Arc::new(Semaphore::new(1)),inode:namespace_inode}))
+        let (sink,stream)=ws.split();
+        let (stop,_)=tokio::sync::watch::channel(false);
+        Python::with_gil(|py|Py::new(py,NativeSocket {
+            sink:Arc::new(Mutex::new(Some(sink))),stream:Arc::new(Mutex::new(Some(stream))),
+            send_busy:Arc::new(Semaphore::new(1)),recv_busy:Arc::new(Semaphore::new(1)),stop,inode:namespace_inode,
+        }))
     })
 }
 
@@ -192,6 +221,7 @@ pub fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     runtime.worker_threads(2).max_blocking_threads(2).thread_stack_size(512*1024).enable_all();
     pyo3_async_runtimes::tokio::init(runtime);
     module.add_function(wrap_pyfunction!(replay_binary_response,module)?)?;
+    module.add_class::<super::borsh::NativeBorshSchema>()?;
     module.add_class::<NativeHttp>()?;
     module.add_function(wrap_pyfunction!(connect_ws,module)?)
 }
@@ -211,6 +241,19 @@ mod tests {
         assert!(semaphore.clone().try_acquire_owned().is_err());
         drop(permit);
         assert!(semaphore.try_acquire_owned().is_ok());
+    }
+    #[test] fn independent_directions_and_persistent_shutdown() {
+        let send=Arc::new(Semaphore::new(1)); let recv=Arc::new(Semaphore::new(1));
+        let sending=send.clone().try_acquire_owned().unwrap();
+        let receiving=recv.clone().try_acquire_owned().unwrap();
+        assert!(send.clone().try_acquire_owned().is_err());
+        assert!(recv.clone().try_acquire_owned().is_err());
+        let (stop,_)=tokio::sync::watch::channel(false);
+        stop.send_replace(true);
+        assert!(*stop.subscribe().borrow());
+        drop((sending,receiving));
+        assert!(send.try_acquire_owned().is_ok());
+        assert!(recv.try_acquire_owned().is_ok());
     }
     #[test] fn endpoints() {
         assert!(url("http://example.org",false,true).is_err());

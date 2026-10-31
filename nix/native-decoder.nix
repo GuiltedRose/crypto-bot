@@ -8,7 +8,7 @@ python.pkgs.buildPythonPackage {
     src = ../native/solana_binary;
     filter = path: type:
       if type == "directory" then builtins.baseNameOf path != "target"
-      else builtins.elem (builtins.baseNameOf path) [ "Cargo.toml" "Cargo.lock" "pyproject.toml" "lib.rs" "rpc.rs" ];
+      else builtins.elem (builtins.baseNameOf path) [ "Cargo.toml" "Cargo.lock" "pyproject.toml" "lib.rs" "rpc.rs" "borsh.rs" ];
   };
   cargoDeps = pkgs.rustPlatform.importCargoLock { lockFile = ../native/solana_binary/Cargo.lock; };
   nativeBuildInputs = [ pkgs.rustPlatform.cargoSetupHook ];

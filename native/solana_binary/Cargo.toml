@@ -17,7 +17,7 @@ pyo3 = { version = "=0.23.5", default-features = false, features = ["macros"] }
 
 [dependencies.tokio]
 version = "=1.43.0"
-features = ["rt-multi-thread", "net", "time", "sync"]
+features = ["rt-multi-thread", "net", "time", "sync", "macros"]
 optional = true
 
 [dependencies.reqwest]

@@ -83,7 +83,10 @@ def read_struct(raw, fields, offset, types):
 
 
 class Decoder:
-    def __init__(self):
+    def __init__(self, backend='python'):
+        if backend not in ('python','rust','compare'): raise ValueError('Unknown event backend')
+        self.backend=backend
+        self.native_schemas={}
         self.specs = {}
         for name in ('pump', 'pump_amm'):
             raw = (ROOT / (name + '.json')).read_bytes()
@@ -98,6 +101,27 @@ class Decoder:
                 'types': {t['name']: t['type'] for t in idl['types']},
                 'events': {bytes(e['discriminator']): e['name'] for e in idl['events']},
                 'instructions': {bytes(i['discriminator']): i for i in idl['instructions']}}
+
+    def event_fields(self, program, event_name, raw):
+        spec=self.specs[program]
+        fields=spec['types'][event_name]['fields']
+        if self.backend=='python': return read_struct(raw,fields,16,spec['types'])
+        key=(program,event_name)
+        if key not in self.native_schemas:
+            try: from _solana_binary import NativeBorshSchema
+            except ImportError: raise ValueError('Native event schema unavailable; explicit backend cannot fall back') from None
+            self.native_schemas[key]=NativeBorshSchema(json.dumps(fields),json.dumps(spec['types']))
+        text,end=self.native_schemas[key].decode(raw,16)
+        def restore(value):
+            if isinstance(value,dict):
+                if set(value)=={'$integer'}: return int(value['$integer'])
+                return {key:restore(item) for key,item in value.items()}
+            if isinstance(value,list): return [restore(item) for item in value]
+            return value
+        native=(restore(json.loads(text)),end)
+        if self.backend=='compare' and native!=read_struct(raw,fields,16,spec['types']):
+            raise ValueError('Native event field parity mismatch')
+        return native
 
     def transaction(self, tx, slot, tx_index, block_time):
         meta, transaction = tx['meta'], tx['transaction']
@@ -171,7 +195,7 @@ class Decoder:
                     event_name = spec['events'].get(raw[8:16])
                     if event_name is None:
                         raise ValueError('Unknown event discriminator')
-                    fields, end = read_struct(raw, spec['types'][event_name]['fields'], 16, spec['types'])
+                    fields, end = self.event_fields(program,event_name,raw)
                     if end != len(raw):
                         issues.append(f'{event_name}: payload {len(raw)-16} bytes, pinned fields {end-16}, trailing {len(raw)-end}; program {program}')
                         raise ValueError('Unreviewed event layout/version')

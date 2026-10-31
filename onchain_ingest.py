@@ -100,7 +100,7 @@ class Ingester:
         if not endpoints:
             raise ValueError('At least one explicitly authorized RPC required')
         self.store, self.endpoints = store, endpoints
-        self.decoder = decoder or Decoder()
+        self.decoder = decoder or Decoder(backend=getattr(endpoints[0],'event_backend','python'))
         self.versions = versions or {}
         for rpc in endpoints:
             self.store.policy(rpc.source)

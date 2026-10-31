@@ -33,8 +33,9 @@ Python remains the default; no unsafe operations were introduced (`deny(unsafe_c
    triggers a bounded 30-second receive timeout; production tuning remains pending.
 4. **Processing/storage:** real binary decoder is reused by an offline RPC replay
    summarizer and `RustIndexRpc.decode_binary`. JSON blocks still pass through the
-   established Pump/PumpSwap decoder and EventStore. Native program-event extraction,
-   compact live market-event output and native event storage are NOT implemented.
+   established Pump/PumpSwap decoder and EventStore. Native Borsh event fields and compact projection are now experimental; see
+   [optimization pass](rust_rpc_optimization.md). Full native transaction-context
+   validation, normalization and event storage are NOT implemented.
    No equivalent validated native IDL/upgrade evidence exists yet; unknown layouts
    retain their existing quarantine. This is a transport migration, not completed
    end-to-end Rust indexing, independent verification or production readiness.
