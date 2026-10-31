@@ -1,0 +1,18 @@
+{
+  "endpoints": [{
+    "enabled": false,
+    "source_id": "own-replaying-node-review-required-v1",
+    "url": "http://127.0.0.1:8899",
+    "allow_loopback_http": true,
+    "interval_seconds": 2,
+    "policy": {
+      "storage_verified": false,
+      "ml_verified": false,
+      "evaluation_verified": false,
+      "usd_conversion_verified": false,
+      "evidence": "REPLACE with operator, source provenance, rights and review date"
+    }
+  }],
+  "markets": [],
+  "reviewed_program_versions": {}
+}

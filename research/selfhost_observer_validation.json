@@ -1,0 +1,21 @@
+{
+  "status": "NOT_RUN_AT_USER_REQUEST",
+  "tests_executed": false,
+  "benchmarks_executed": false,
+  "prototype_executed": false,
+  "network_probes_executed": false,
+  "validator_started": false,
+  "independent_network_connectivity": null,
+  "received_transactions": null,
+  "verified_successful_swaps": null,
+  "missing_transactions": null,
+  "finalization_latency_seconds": null,
+  "event_to_candle_latency_seconds": null,
+  "compression_ratio": null,
+  "sustained_throughput": null,
+  "independent_feed_proven": false,
+  "hardware_assessment": "Below current recommended mainnet replay RAM and CPU baseline; not benchmarked",
+  "operational_state_modified": false,
+  "live_trading_enabled": false,
+  "training_enabled": false
+}

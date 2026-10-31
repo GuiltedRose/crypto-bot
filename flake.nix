@@ -87,16 +87,17 @@
       });
       devShells = eachSystem (system:
         let inherit (environments.${system}) pkgs python;
-        in { default = pkgs.mkShell { packages = [ python pkgs.sqlite pkgs.tmux ]; }; });
+        in { default = pkgs.mkShell { packages = [ python pkgs.sqlite pkgs.tmux pkgs.zstd ]; }; });
       checks = eachSystem (system:
         let inherit (environments.${system}) pkgs python;
-        in { indexer = pkgs.runCommand "crypto-bot-indexer-tests" { nativeBuildInputs = [ python ]; } ''
+        in { indexer = pkgs.runCommand "crypto-bot-indexer-tests" { nativeBuildInputs = [ python pkgs.zstd ]; } ''
           cp -r ${source} source
           chmod -R u+w source
           cd source
           python -m unittest discover -s tests -p test_onchain_indexer.py
           python -m unittest discover -s tests -p test_onchain_hour.py
           python -m unittest discover -s tests -p test_onchain_stream_candles.py
+          python -m unittest discover -s tests -p test_selfhost_observer.py
           touch $out
         ''; });
       nixosModules.default = { config, lib, pkgs, ... }:

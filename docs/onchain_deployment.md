@@ -1,5 +1,8 @@
 # Local indexer and paper deployment
 
+Self-hosting feasibility, unexecuted prototype and operator test commands:
+[self-hosted observer report](../research/selfhost_observer_feasibility.md).
+
 Incremental candle/WSS additions: [real-time engine status](realtime_market_engine.md).
 
 Reviewed 2026-10-30. Latest hour/oracle evidence: [real-hour milestone](../research/onchain_hour_milestone.md). **Not production-ready:** real swap layouts, a reviewed USD

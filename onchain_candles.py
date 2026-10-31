@@ -148,6 +148,10 @@ class CandleEngine:
         return {'processed_minutes': len(dirty), 'pending_minutes': pending, 'watermark': watermark}
 
     def rolling(self, mint, pool, start, end):
+        if type(start) is not int or type(end) is not int or end <= start:
+            raise ValueError('Valid rolling interval required')
+        if not self.store.coverage(start, end)['complete']:
+            return Decimal(0), Decimal(0), set(), ['rolling window coverage incomplete']
         buy,sell,sources,errors=Decimal(0),Decimal(0),set(),[]
         market=OnchainMarket(self.store)
         for stamp in range(start//60*60,(end+59)//60*60,60):

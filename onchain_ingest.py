@@ -1,5 +1,6 @@
 """Bounded, read-only finalized block polling with transactional recovery."""
 import base64
+import ipaddress
 import json
 import time
 import zlib
@@ -37,7 +38,13 @@ class IndexRpc:
     def __init__(self, endpoint, budget=None):
         self.url = endpoint['url']
         parsed = urlparse(self.url)
-        if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password:
+        local_http = False
+        if endpoint.get('allow_loopback_http') is True and parsed.hostname:
+            try:
+                local_http = parsed.scheme == 'http' and ipaddress.ip_address(parsed.hostname).is_loopback
+            except ValueError:
+                pass
+        if (parsed.scheme != 'https' and not local_http) or not parsed.hostname or parsed.username or parsed.password:
             raise ValueError('HTTPS RPC endpoint required')
         self.source = endpoint['source_id']
         self.interval = max(.5, float(endpoint.get('interval_seconds', 2)))
