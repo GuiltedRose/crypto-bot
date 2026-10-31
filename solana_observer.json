@@ -1,0 +1,34 @@
+{
+  "endpoints": [
+    {
+      "enabled": true,
+      "source_id": "solana-public-mainnet-dev-review-v1",
+      "url": "https://api.mainnet-beta.solana.com",
+      "ws_url": "wss://api.mainnet-beta.solana.com",
+      "source_kind": "solana_rpc",
+      "interval_seconds": 5,
+      "pending_capacity": 4096,
+      "observation_limit": 100000,
+      "stream_mentions": [
+        "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+        "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
+      ],
+      "policy": {
+        "storage_verified": false,
+        "stream_verified": false,
+        "ml_verified": false,
+        "evaluation_verified": false,
+        "usd_conversion_verified": false,
+        "evidence": "Public Solana mainnet RPC development endpoint. Storage and streaming permissions must be reviewed before use."
+      }
+    }
+  ],
+  "markets": [
+    {
+      "mint": "GXNXwLeoeupXEvufsXDQoEfk1immBtaE4kVFC4tBpump",
+      "pool": "84z5iJLT5cHRHxDHQgNYsKtX8jstLcRS1ZzQ2XZA3XZK"
+    }
+  ],
+  "reviewed_program_versions": {}
+}
+
