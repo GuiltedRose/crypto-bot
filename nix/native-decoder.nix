@@ -12,7 +12,7 @@ python.pkgs.buildPythonPackage {
   };
   cargoDeps = pkgs.rustPlatform.importCargoLock { lockFile = ../native/solana_binary/Cargo.lock; };
   nativeBuildInputs = [ pkgs.rustPlatform.cargoSetupHook ];
-  build-system = [ python.pkgs.maturin ];
+  build-system = [ pkgs.rustPlatform.maturinBuildHook ];
   pythonImportsCheck = [ "_solana_binary" ];
   doCheck = false; # Operator runs explicit offline differential tests.
 }
