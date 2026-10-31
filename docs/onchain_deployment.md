@@ -201,3 +201,13 @@ Synthetic fixture tests and passing regression tests do not establish these fact
 The maintained Python subscription entry point and operator-run validation steps
 are documented in [Python Solana observer](solana_observer.md). This integration
 and its new tests have not been executed; use an isolated database.
+
+For the independent-node hardware assessment, local-only observer configuration
+and unexecuted server benchmarks, see [independent node plan](independent_node_plan.md).
+
+[Observer retention](observer_retention.md) provides the unexecuted, default-dry-run
+historical pruning lifecycle. It never manages native replay-node storage.
+
+The [mandatory network budget](solana_network_budget.md) takes precedence over
+collection instructions: 120GB normal, authorized reserve, conservative cutoff,
+all-process isolation and explicit gaps. Network deployment remains disabled.

@@ -28,6 +28,18 @@ def prepare(config, database, resume=False):
     for row in endpoints:
         if row.get('source_kind','solana_rpc') not in ('solana_rpc','local_rpc'):
             raise ValueError('Only reviewed JSON-RPC sources are implemented')
+    if config.get('require_local_replay') is True:
+        from run_local_observer import local_endpoint
+        import ipaddress
+        from urllib.parse import urlparse
+        for row in endpoints:
+            local_endpoint(row)
+            try:
+                local_ws=ipaddress.ip_address(urlparse(row.get('ws_url','')).hostname or '').is_loopback
+            except ValueError:
+                local_ws=False
+            if not local_ws or row.get('source_kind') != 'local_rpc':
+                raise ValueError('Local replay mode forbids external endpoints and fallbacks')
     endpoint=endpoints[0]
     for key,default,maximum in [('pending_capacity',4096,100000),('observation_limit',100000,1000000)]:
         value=endpoint.get(key,default)

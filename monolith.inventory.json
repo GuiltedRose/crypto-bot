@@ -1,0 +1,14 @@
+{
+  "cpu_model": "dual Intel Xeon E5-2630 v4 (operator supplied)",
+  "ram_gb": 64,
+  "total_free_gb": 884,
+  "accounts_nvme_gb": null,
+  "ledger_nvme_gb": null,
+  "snapshots_nvme_gb": null,
+  "cpu_base_ghz": null,
+  "avx2": null,
+  "sha_extensions": null,
+  "separate_accounts_ledger_nvme": null,
+  "symmetric_network_gbps": null,
+  "public_ipv4": null
+}

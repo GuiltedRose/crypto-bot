@@ -254,15 +254,36 @@ async def run_stream(ingester, endpoint, start, candles, batch=8, interval=5, co
     hints=StreamHints(ingester.store,endpoint['source_id'],
                       capacity=endpoint.get('pending_capacity',4096),
                       observation_limit=endpoint.get('observation_limit',100000))
+    def check_network_budget():
+        configured=endpoint.get('network_budget')
+        if configured:
+            import sqlite3
+            from solana_network_budget import Budget
+            try:
+                usage=Budget(configured['ledger']).report(time.time())
+                if usage['optional_collection_suspended']:
+                    raise ValueError('Normal billing-cycle limit reached')
+            except (ValueError,OSError,KeyError,sqlite3.Error) as error:
+                hints.state('gap',{'reason':'network budget suspension','at':time.time(),
+                                   'checkpoint_preserved':True})
+                raise SourceAccessBlocked('Network budget unavailable or exhausted; explicit gap recorded') from None
+    check_network_budget()
     wake=asyncio.Event()
     listener=asyncio.create_task(listen(endpoint,hints,wake,connector=connector))
     failures=0
     cycles=0
     try:
         while True:
+            check_network_budget()
             if listener.done():
                 listener.result()
             try:
+                if endpoint.get('retention'):
+                    from observer_retention import accounting
+                    retention=endpoint['retention']
+                    usage=await durable_work(accounting,ingester.store,retention['archive_directory'],retention)
+                    if usage['pause_nonessential_writes']:
+                        raise SourceAccessBlocked('Observer storage budget reached; ingestion paused, checkpoint preserved')
                 result=await durable_work(ingester.step,start,batch)
                 start=None if ingester.store.next_slot() is not None else start
                 failures=0;hints.recover();result['stream']=hints.report()

@@ -85,6 +85,27 @@ class EventStore:
             raise ValueError('Unregistered source')
         return json.loads(row[0])
 
+    def retained_block(self, slot):
+        """Verified raw evidence from hot storage or an explicitly indexed archive."""
+        from onchain_hour import unpack_block
+        with self.connect() as db:
+            header = db.execute('SELECT raw_hash FROM blocks WHERE slot=?', (slot,)).fetchone()
+            row = db.execute('SELECT raw,raw_hash FROM raw_blocks WHERE slot=?', (slot,)).fetchone()
+            if row:
+                raw = unpack_block(row['raw'])
+            else:
+                exists = db.execute("SELECT 1 FROM sqlite_master WHERE name='retention_archives'").fetchone()
+                archive = db.execute('SELECT * FROM retention_archives WHERE slot=?', (slot,)).fetchone() if exists else None
+                if archive is None:
+                    return None
+                from observer_archive import verify_archive
+                raw, manifest = verify_archive(archive['path'])
+                if manifest['slot'] != slot or manifest['raw_sha256'] != archive['raw_hash']:
+                    raise ValueError('Archive catalog mismatch')
+            if not header or hashlib.sha256(raw).hexdigest() != header['raw_hash']:
+                raise ValueError('Retained evidence hash mismatch')
+            return raw
+
     def next_slot(self):
         with self.connect() as db:
             row = db.execute("SELECT value FROM checkpoints WHERE name='next_slot'").fetchone()

@@ -27,6 +27,15 @@ def codec(raw, decompress=False, limit=MAX_FRAME, level=3, timeout=30):
         raise ValueError('Archive byte limit exceeded')
     if type(level) is not int or not 1 <= level <= 6 or not 0 < timeout <= 120:
         raise ValueError('Invalid bounded codec settings')
+    if not decompress:
+        import io
+        from observer_zstd import compress_stream, CHUNK
+        output = io.BytesIO()
+        compress_stream((memoryview(raw)[offset:offset+CHUNK] for offset in range(0,len(raw),CHUNK)),
+                        output, level=level, timeout=timeout)
+        frame = output.getvalue()
+        if len(frame) > limit: raise ValueError('Compressed output limit exceeded')
+        return frame
     executable = shutil.which('zstd')
     if executable is None:
         raise RuntimeError('Install zstd or enter nix develop; no codec fallback is used')
@@ -91,6 +100,24 @@ def export_slot(store, slot, directory, level=3):
     if digest(raw) != row['raw_hash'] or row['retained_hash'] != row['raw_hash']:
         raise ValueError('Retained block integrity mismatch')
     frame, manifest = pack(raw, level)
+    # Column-oriented sidecar removes repeated event keys; SQL events and candles
+    # remain immediately queryable. Full block evidence is separately retained.
+    with store.connect() as db:
+        events = [json.loads(item[0]) for item in db.execute(
+            'SELECT payload FROM events WHERE slot=? ORDER BY tx_index,outer_index,event_index', (slot,))]
+        columns = sorted({key for event in events for key in event})
+        conversions = [list(item) for item in db.execute('SELECT * FROM conversions WHERE time BETWEEN ? AND ? ORDER BY mint,time,source', (row['time']-3600,row['time']))]
+        policies = [list(item) for item in db.execute('SELECT id,policy FROM sources ORDER BY id')]
+    compact = canonical({'format':'observer-market-columns-v1','columns':columns,
+                         'rows':[[event.get(key) for key in columns] for event in events],
+                         'presence':[[index for index,key in enumerate(columns) if key in event] for event in events],
+                         'conversion_columns':['mint','time','usd','source','proof'],
+                         'conversions':conversions,'source_policies':policies}).encode()
+    market_frame, market_manifest = pack(compact, level)
+    manifest['market_archive'] = market_manifest
+    manifest['market_event_count'] = len(events)
+    manifest['transaction_count'] = row['transactions']
+    manifest['slot_range'] = [slot,slot]
     manifest.update(slot=slot, blockhash=row['hash'], parent_slot=row['parent'],
                     time=row['time'], source_id=row['source'], issues=json.loads(row['issues']),
                     retention='copy only; source evidence and evaluation references retained')
@@ -108,7 +135,7 @@ def export_slot(store, slot, directory, level=3):
         return manifest
     temporary = Path(tempfile.mkdtemp(prefix='.pending-', dir=directory))
     try:
-        for name, content in [('block.zst', frame), ('manifest.json', (canonical(manifest)+'\n').encode())]:
+        for name, content in [('block.zst', frame), ('market.zst', market_frame), ('manifest.json', (canonical(manifest)+'\n').encode())]:
             with (temporary/name).open('xb') as output:
                 output.write(content); output.flush(); os.fsync(output.fileno())
         # Flush the directory as well as file contents before publishing the pair.
@@ -122,6 +149,42 @@ def export_slot(store, slot, directory, level=3):
     finally:
         if temporary.exists(): shutil.rmtree(temporary)
     return manifest
+
+
+def verify_archive(directory):
+    """Read back bounded bytes and independently validate decoded block identity."""
+    directory = Path(directory)
+    if directory.is_symlink():
+        raise ValueError('Archive directory symlink rejected')
+    for name in ('manifest.json', 'block.zst'):
+        if (directory/name).is_symlink():
+            raise ValueError('Archive file symlink rejected')
+    with (directory/'manifest.json').open('rb') as stream:
+        metadata = stream.read(262145)
+    if len(metadata) > 262144:
+        raise ValueError('Oversized archive manifest')
+    manifest = json.loads(metadata)
+    with (directory/'block.zst').open('rb') as stream:
+        frame = stream.read(MAX_FRAME + 1)
+    raw = unpack(frame, manifest)
+    block = json.loads(raw)
+    if (block['blockhash'], block['parentSlot'], block['blockTime']) != (
+            manifest['blockhash'], manifest['parent_slot'], manifest['time']):
+        raise ValueError('Archive block identity mismatch')
+    if not isinstance(block['transactions'], list):
+        raise ValueError('Invalid archived transaction ordering')
+    if 'market_archive' in manifest:
+        if (directory/'market.zst').is_symlink(): raise ValueError('Market archive symlink rejected')
+        with (directory/'market.zst').open('rb') as stream:
+            market_frame = stream.read(MAX_FRAME+1)
+        market = json.loads(unpack(market_frame, manifest['market_archive']))
+        if market['format'] != 'observer-market-columns-v1' or len(market['rows']) != manifest['market_event_count']:
+            raise ValueError('Market archive count/format mismatch')
+        if len(market.get('presence', [])) != len(market['rows']):
+            raise ValueError('Market archive key-presence mismatch')
+        if any(len(row) != len(market['columns']) for row in market['rows']):
+            raise ValueError('Market archive column mismatch')
+    return raw, manifest
 
 
 def main():

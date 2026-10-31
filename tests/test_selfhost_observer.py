@@ -69,7 +69,7 @@ class ArchiveGuards(unittest.TestCase):
         with self.assertRaises(ValueError):unpack(b'',{'format':FORMAT,'raw_bytes':MAX_RAW+1})
         with self.assertRaises(ValueError):unpack(b'bad',{'format':FORMAT,'raw_bytes':0,'frame_bytes':3,'frame_sha256':'wrong'})
         with patch('observer_archive.shutil.which',return_value=None):
-            with self.assertRaises(RuntimeError):pack(b'payload')
+            with self.assertRaises(RuntimeError):codec(b'payload',decompress=True)
         with self.assertRaises(ValueError):codec(b'',level=99)
 
 

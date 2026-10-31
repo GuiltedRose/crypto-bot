@@ -121,6 +121,17 @@ class PersistenceTests(unittest.TestCase):
             self.assertEqual(completed,[True])
         asyncio.run(run())
 
+    def test_local_replay_mode_rejects_remote_fallback_before_database_creation(self):
+        endpoint={'enabled':True,'source_kind':'local_rpc','url':'http://127.0.0.1:8899',
+                  'allow_loopback_http':True,'ws_url':'ws://127.0.0.1:8900',
+                  'allow_loopback_ws':True,'source_id':'local',
+                  'policy':{**fixtures.POLICY,'stream_verified':True}}
+        remote={**endpoint,'url':'https://example.invalid'}
+        config={'require_local_replay':True,'endpoints':[endpoint,remote]}
+        path=Path(self.helper.temp.name)/'forbidden.sqlite'
+        with self.assertRaises(ValueError):prepare(config,path)
+        self.assertFalse(path.exists())
+
     def test_config_requires_rights_and_isolated_database(self):
         endpoint={'enabled':True,'url':'https://example.invalid','ws_url':'wss://example.invalid',
                   'source_id':'fixture','policy':dict(fixtures.POLICY)}
@@ -132,6 +143,18 @@ class PersistenceTests(unittest.TestCase):
         ingester,_,_=prepare(config,path)
         self.assertIsNone(ingester.store.next_slot())
         with self.assertRaises(ValueError):prepare(config,path)  # no implicit overwrite/resume
+
+    def test_missing_network_ledger_records_gap_before_connecting(self):
+        from onchain_stream import run_stream
+        checkpoint=self.store.next_slot()
+        ingester=type('Ingester',(),{'store':self.store})()
+        endpoint={'source_id':'fixture','network_budget':{'ledger':str(Path(self.helper.temp.name)/'missing-budget.sqlite')}}
+        with patch('onchain_stream.listen',new_callable=AsyncMock) as listener:
+            with self.assertRaises(SourceAccessBlocked):
+                asyncio.run(run_stream(ingester,endpoint,None,object(),max_cycles=1))
+            listener.assert_not_called()
+        self.assertEqual(self.store.next_slot(),checkpoint)
+        self.assertIn('gap',StreamHints.read_status(self.store)['states'])
 
     def test_original_observe_entry_delegates_without_connecting(self):
         async def run():

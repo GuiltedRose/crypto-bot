@@ -33,13 +33,18 @@ def audit_hour(store, start, end, mint, pool):
             blocks = []
         decoder = Decoder()
         for row in blocks:
-            raw = db.execute('SELECT raw,raw_hash FROM raw_blocks WHERE slot=?', (row['slot'],)).fetchone() if has_raw else None
+            try:
+                retained = store.retained_block(row['slot'])
+            except (ValueError, OSError):
+                errors.append('retained archive invalid: ' + str(row['slot']))
+                continue
+            raw = {'raw': retained, 'raw_hash': row['raw_hash']} if retained is not None else None
             if raw is None:
                 errors.append('full block not retained: ' + str(row['slot']))
                 continue
             retained_bytes += len(raw['raw'])
             try:
-                payload = unpack_block(raw['raw'])
+                payload = raw['raw']
                 digest = hashlib.sha256(payload).hexdigest()
                 if digest != raw['raw_hash'] or digest != row['raw_hash']:
                     raise ValueError('retained block hash mismatch')
@@ -92,7 +97,7 @@ def audit_hour(store, start, end, mint, pool):
                'events': relevant, 'candles': candles, 'buy_volume_usd': str(buy), 'sell_volume_usd': str(sell)}
     return {'scope': 'global finalized block replay; analytics for requested mint/pool only',
             'start': start, 'end': end, 'mint': mint, 'pool': pool, 'coverage': coverage,
-            'blocks_required': len(blocks), 'blocks_replayed': replay_count, 'retained_compressed_bytes': retained_bytes,
+            'blocks_required': len(blocks), 'blocks_replayed': replay_count, 'retained_raw_bytes': retained_bytes,
             'replay_consistent': replay_ok, 'usd_conversions_complete': conversions_ok, 'replay_sha256': hashlib.sha256(canonical(content).encode()).hexdigest(),
             'event_counts': dict(sorted(kinds.items())), 'target_swaps': len(swaps),
             'buy_volume_usd': str(buy), 'sell_volume_usd': str(sell), 'completed_candles': len(candles),

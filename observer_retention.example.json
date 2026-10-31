@@ -1,0 +1,12 @@
+{
+  "hot_seconds": 86400,
+  "warm_seconds": 2592000,
+  "os_reserve_bytes": 50000000000,
+  "emergency_bytes": 50000000000,
+  "archive_bytes": 100000000000,
+  "database_bytes": 25000000000,
+  "max_batch": 32,
+  "compression_level": 3,
+  "safe_before_slot": 0,
+  "dependencies_reviewed": false
+}

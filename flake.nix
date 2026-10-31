@@ -45,7 +45,7 @@
               };
             };
           };
-        in { inherit pkgs; python = python.withPackages (p: [ p.solders p.websockets ]); });
+        in { inherit pkgs; python = python.withPackages (p: [ p.solders p.websockets p.zstandard ]); });
       # Explicit source filter: no state, .env, private config, wallet files or venv.
       source = nixpkgs.lib.cleanSourceWith {
         src = ./.;

@@ -60,6 +60,8 @@ def main():
     group.add_argument('--synthetic-bytes',type=int)
     parser.add_argument('--iterations',type=int,default=1)
     parser.add_argument('--index-db',type=Path)
+    parser.add_argument('--retention-config',type=Path)
+    parser.add_argument('--archive-directory',type=Path)
     args=parser.parse_args()
     report={'hardware':hardware(args.scratch_directory),'benchmark_status':'not_requested'}
     raw=None
@@ -75,6 +77,9 @@ def main():
         report['benchmark_status']='completed locally; not a validator/network benchmark'
     if args.index_db:
         store=EventStore(args.index_db,readonly=True)
+        if args.retention_config and args.archive_directory:
+            from observer_retention import accounting
+            report['storage']=accounting(store,args.archive_directory,json.loads(args.retention_config.read_text()))
         started=time.perf_counter()
         with store.connect() as db:
             rows=db.execute('SELECT slot,time FROM blocks ORDER BY slot DESC LIMIT 64').fetchall()
