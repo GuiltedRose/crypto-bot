@@ -1,7 +1,8 @@
 //! Binary structure only: no execution, address loading, program decoding or trust.
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::{PyBytes, PyBytesMethods, PyList, PyListMethods};
 
 type Instruction = (u8, Vec<u8>, Vec<u8>);
 type Lookup = (Vec<u8>, Vec<u8>, Vec<u8>);
@@ -93,8 +94,42 @@ fn parse_transaction(raw: &[u8]) -> PyResult<Parsed> {
     parse(raw).map_err(PyValueError::new_err)
 }
 
+/// Offline measurements only. No networking or execution authority.
+#[pyfunction]
+fn benchmark_parse(packets: &Bound<'_, PyList>, iterations: usize, batch: usize) -> PyResult<(u128,u128,u128)> {
+    if packets.is_empty() || packets.len()>64 || !(1..=1000).contains(&iterations) || ![1,64].contains(&batch) {
+        return Err(PyValueError::new_err("invalid bounded benchmark"));
+    }
+    let mut inputs = Vec::with_capacity(packets.len());
+    for item in packets.iter() {
+        let raw = item.downcast::<PyBytes>()?.as_bytes();
+        parse(raw).map_err(PyValueError::new_err)?;
+        inputs.push(raw.to_vec());
+    }
+    let mut samples = Vec::with_capacity(iterations*batch);
+    let total = std::time::Instant::now();
+    for _ in 0..iterations {
+        for index in 0..batch {
+            let start = std::time::Instant::now();
+            std::hint::black_box(parse(&inputs[index%inputs.len()]).map_err(PyValueError::new_err)?);
+            samples.push(start.elapsed().as_nanos());
+        }
+    }
+    let elapsed = total.elapsed().as_nanos();
+    samples.sort_unstable();
+    Ok((elapsed,samples[samples.len()/2],samples[(samples.len()-1)*95/100]))
+}
+
+#[pyfunction]
+fn binding_input_len(raw: &[u8]) -> PyResult<usize> {
+    if raw.len()>1232 { return Err(PyValueError::new_err("packet too large")); }
+    Ok(raw.len())
+}
+
 #[pymodule]
 fn _solana_binary(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_function(wrap_pyfunction!(benchmark_parse, module)?)?;
+    module.add_function(wrap_pyfunction!(binding_input_len, module)?)?;
     module.add_function(wrap_pyfunction!(parse_transaction, module)?)
 }
 

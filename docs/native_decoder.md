@@ -71,3 +71,58 @@ fixtures for representative real benchmarks. The benchmark uses separate process
 for Python/Rust, serial batches of 1/64, throughput, latency and process peak RSS.
 RSS includes interpreter/imports; performance results remain unavailable. No
 speedup, memory savings, production readiness or mainnet independence is claimed.
+
+## Binary ingestion and installed application
+
+The current safety lint is `deny(unsafe_code)`: safe Rust remains the default;
+no unsafe code was added. Any future local exception needs specific invariants,
+justification and targeted tests. Neither unsafe Rust nor a language change is an
+OOM-prevention guarantee.
+
+`solana_binary_ingest.ingest_rpc_response` accepts original base64 wire bytes from
+an already obtained getTransaction response; `ingest_binary` accepts an approved
+local source's bytes plus explicit slot, canonical transaction index, commitment,
+execution metadata and reviewed source policy. They perform no requests or DB
+writes. `binary_ingestion_verified=true` plus storage rights/evidence is required;
+this is operator approval, not a new grant of data rights. Malformed evidence is
+returned as a quarantined envelope with its original context. JSON transactions
+are never re-serialized. Execution errors are preserved as source-reported failures.
+Lookup-table addresses require matching source metadata and remain source claims.
+
+Even complete input stays `market_eligible=false`, `execution_verified=false` and
+`consensus_verified=false`. This API is ready for an explicitly approved binary
+collector, not silently wired into the existing JSON ingester or Pump decoder.
+Actual finalized verification, source/program-version checks and reproducible
+Pump event validation are still mandatory before market/learning use. No authentic
+binary capture or collector has been demonstrated here.
+
+After Cargo.lock review/commit, `nix build .#native-app` produces existing app
+wrappers with the native extension on PYTHONPATH. The default package retains its
+Python fallback and all four platforms remain declared. Packaging is unbuilt;
+PyO3/maturin dependencies are not available/verified here. Do not mistake a skipped
+native test for a successful native build.
+
+### Exact operator commands
+
+```bash
+nix develop
+cargo generate-lockfile --manifest-path native/solana_binary/Cargo.toml
+# Review Cargo.lock and git-add the new source/lock/packaging files before Nix.
+nix build .#native-decoder .#native-app
+nix develop .#native
+cargo test --locked --manifest-path native/solana_binary/Cargo.toml
+python -m unittest discover -s tests -p 'test_solana_binary*.py'
+python benchmark_solana_binary.py --scope adapter /isolated/authentic-wire.bin
+python benchmark_solana_binary.py --scope parser /isolated/authentic-wire.bin
+python benchmark_solana_binary.py --scope binding /isolated/authentic-wire.bin
+nix flake show
+```
+
+Adapter timing includes binding/output normalization; parser timing separates the
+Python reference loop and Rust-internal parser loop (input conversion and result
+marshalling outside Rust timing). Binding-only timing is a no-op input-length
+baseline, not a subtraction that proves exact FFI overhead. Same authentic inputs
+and separate processes are used, batches 1/64. No RPC/decompression/DB writes occur
+inside timing. Allocation metrics remain null: no reliable cross-language allocator
+instrumentation is installed. Peak RSS is whole-process, not per-transaction or
+native-only allocation. No speed/memory results or production readiness are claimed.

@@ -87,7 +87,19 @@
                 --add-flags "$out/share/crypto-bot/solana_observer.py"
             '';
           };
-        } // pkgs.lib.optionalAttrs nativeReady { native-decoder = nativePackage system; });
+         } // pkgs.lib.optionalAttrs nativeReady {
+          native-decoder = nativePackage system;
+          native-app = pkgs.symlinkJoin {
+            name = "crypto-bot-native-app";
+            paths = [ self.packages.${system}.default ];
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            postBuild = ''
+              for program in $out/bin/crypto-bot-*; do
+                wrapProgram "$program" --prefix PYTHONPATH : "${nativePackage system}/${environments.${system}.pythonBase.sitePackages}"
+              done
+            '';
+          };
+        });
       apps = eachSystem (system: {
         default = self.apps.${system}.indexer;
         indexer = { type = "app"; program = "${self.packages.${system}.default}/bin/crypto-bot-indexer"; };
