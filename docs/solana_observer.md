@@ -39,14 +39,14 @@ Start with a new isolated database, never a paper/live ledger:
 
 ```bash
 python solana_observer.py --config /private/reviewed-observer.json \
-  --db /isolated/observer.sqlite --start-slot <REVIEWED_FINALIZED_SLOT> --max-cycles 1
+  --db /isolated/observer.sqlite --max-cycles 1
 python solana_observer.py --db /isolated/observer.sqlite --status
 ```
 
 `--max-cycles` bounds successful recovery batches, not wall time; rate/backoff
 waits still apply. Use `--resume` explicitly to reopen the observer database.
-The saved finalized checkpoint wins over a supplied start slot; there is no
-implicit jump to the current chain head. Omit `--max-cycles` for ongoing collection.
+A new empty database discovers its initial finalized slot. A saved finalized
+checkpoint wins over a supplied start slot and is never jumped forward. Omit `--max-cycles` for ongoing collection.
 After building, `nix run .#observer -- ...` supplies the same CLI.
 
 ## Data and failure semantics
@@ -109,3 +109,22 @@ Failover currently covers finalized HTTP recovery. WebSocket observation uses th
 first enabled endpoint; to use public WSS after a local stream failure, explicitly
 select the public-only configuration and resume the same observer DB. No automatic
 WebSocket switching or source-policy approval is implied.
+
+## Automatic initial finalized slot
+
+New/empty observer databases now discover `getSlot` with finalized commitment
+through the configured client (including the Rust bridge). Genesis validation,
+source permissions, provider pacing and network budgets remain in force. Invalid
+or unavailable responses stop startup; no guessed slot is used.
+
+The initial slot is committed before streaming starts, so a startup interruption
+cannot trigger a jump to a newer tip on retry. Existing validated observer files
+resume their saved checkpoint automatically; `--resume` remains accepted. A saved
+checkpoint takes precedence over `--start-slot`. That option supplies an explicit
+initial boundary only for an empty database, including historical replay. Nonempty
+history without a checkpoint fails for explicit recovery rather than guessing.
+Tip discovery starts a new observation window; it does not certify any earlier
+historical hour as complete.
+
+Operator regression command (not executed here):
+`python -m unittest discover -s tests -p 'test_observer_start_slot.py'`.
