@@ -134,3 +134,8 @@ For a flake-managed host, inspect the evaluated configuration explicitly:
 `nix eval /path/to/host-flake#nixosConfigurations.HOST.config.services.solana-budget-isolation.enable`.
 `nixos-option` can use a different legacy configuration than the host flake.
 Keep isolation disabled while verifying option registration; this fix starts no services.
+
+The former isolation-only module now has an opt-in bounded lifecycle. See
+[NixOS lifecycle](nixos_network_lifecycle.md) for the new authoritative setup,
+ordering, isolated test programs and limitations. It supersedes the earlier
+manual namespace/shaping setup; neither version was run here.

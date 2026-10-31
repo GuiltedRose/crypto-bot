@@ -76,6 +76,8 @@
                 --add-flags "$out/share/crypto-bot/run_onchain_indexer.py"
               makeWrapper ${python}/bin/python $out/bin/crypto-bot-paper \
                 --add-flags "$out/share/crypto-bot/run_paper.py"
+              makeWrapper ${python}/bin/python $out/bin/crypto-bot-network-budget \
+                --add-flags "$out/share/crypto-bot/solana_network_budget.py"
               makeWrapper ${python}/bin/python $out/bin/crypto-bot-observer \
                 --add-flags "$out/share/crypto-bot/solana_observer.py"
             '';

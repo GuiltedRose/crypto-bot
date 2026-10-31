@@ -1,0 +1,36 @@
+{
+  "endpoints": [
+    {
+      "enabled": false,
+      "source_id": "solana-public-mainnet-review-required-v1",
+      "url": "https://api.mainnet-beta.solana.com",
+      "ws_url": "wss://api.mainnet-beta.solana.com",
+      "source_kind": "solana_rpc",
+      "interval_seconds": 5,
+      "pending_capacity": 4096,
+      "observation_limit": 100000,
+      "stream_mentions": [
+        "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+        "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
+      ],
+      "policy": {
+        "storage_verified": false,
+        "stream_verified": false,
+        "ml_verified": false,
+        "evaluation_verified": false,
+        "usd_conversion_verified": false,
+        "evidence": "REPLACE with source-specific rights, quota and provenance review"
+      },
+      "network_budget": {
+        "ledger": "/var/lib/solana-network/budget.sqlite"
+      }
+    }
+  ],
+  "markets": [
+    {
+      "mint": "REPLACE_WITH_VERIFIED_MINT",
+      "pool": "REPLACE_WITH_VERIFIED_POOL"
+    }
+  ],
+  "reviewed_program_versions": {}
+}

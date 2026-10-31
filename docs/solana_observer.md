@@ -84,3 +84,28 @@ USD freshness, a complete independently verified hour, deterministic real replay
 provider retention/ML rights and hardware capacity remain unproven. A self-hosted
 node on the available hardware is not assumed viable. No production-readiness,
 independent-feed or profitability claim follows from these changes.
+
+## Optional public mainnet RPC
+
+`solana_observer.public.example.json` configures public Solana HTTPS/WSS for users
+without a local node. `solana_observer.hybrid.example.json` orders local RPC first
+and public RPC second for existing finalized-ingester failover. Both templates
+remain disabled until endpoint policies, markets and program versions are reviewed.
+These are externally sourced modes, not independent verification. Do not enable
+external endpoints in `require_local_replay=true` configurations.
+
+Use the same observer CLI, isolated database, network namespace and persistent
+budget ledger. No public request was made or provider permission reverified here;
+storage/stream/ML rights remain unverified and disabled in these templates.
+Provider throttling/access denial must never trigger quota circumvention.
+
+Reaching the household transfer limit stops collection across ALL sources.
+Public RPC is a backup for local-node unavailability, not extra network allowance.
+Resume from saved checkpoints only within an explicitly authorized session; no
+unlimited catch-up. Public endpoints may lack historical coverage or sufficient
+throughput; missing windows keep market gates closed.
+
+Failover currently covers finalized HTTP recovery. WebSocket observation uses the
+first enabled endpoint; to use public WSS after a local stream failure, explicitly
+select the public-only configuration and resume the same observer DB. No automatic
+WebSocket switching or source-policy approval is implied.
