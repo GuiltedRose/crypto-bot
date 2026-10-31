@@ -56,14 +56,18 @@ class EventStore:
         if self.readonly:
             from urllib.parse import quote
             db = sqlite3.connect('file:' + quote(str(self.path.resolve()), safe='/') + '?mode=ro', uri=True, timeout=30)
-            db.execute('PRAGMA query_only=ON')
+            try:
+                db.execute('PRAGMA query_only=ON')
+            except BaseException:
+                db.close()
+                raise
         else:
             db = sqlite3.connect(self.path, timeout=30)
         db.row_factory = sqlite3.Row
-        if not self.readonly:
-            db.execute('PRAGMA journal_mode=WAL')
-            db.execute('PRAGMA synchronous=FULL')
         try:
+            if not self.readonly:
+                db.execute('PRAGMA journal_mode=WAL')
+                db.execute('PRAGMA synchronous=FULL')
             with db:
                 yield db
         finally:
@@ -92,7 +96,12 @@ class EventStore:
             header = db.execute('SELECT raw_hash FROM blocks WHERE slot=?', (slot,)).fetchone()
             row = db.execute('SELECT raw,raw_hash FROM raw_blocks WHERE slot=?', (slot,)).fetchone()
             if row:
-                raw = unpack_block(row['raw'])
+                if not header or row['raw_hash'] != header['raw_hash']:
+                    raise ValueError('Retained metadata hash mismatch')
+                try:
+                    raw = unpack_block(row['raw'])
+                except zlib.error as error:
+                    raise ValueError('Corrupt retained block payload') from error
             else:
                 exists = db.execute("SELECT 1 FROM sqlite_master WHERE name='retention_archives'").fetchone()
                 archive = db.execute('SELECT * FROM retention_archives WHERE slot=?', (slot,)).fetchone() if exists else None

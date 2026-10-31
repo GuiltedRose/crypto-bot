@@ -27,8 +27,12 @@ class ProviderBudget:
     def connect(self):
         self.path.parent.mkdir(parents=True,exist_ok=True)
         db=sqlite3.connect(self.path,timeout=30)
-        db.execute('CREATE TABLE IF NOT EXISTS providers(host TEXT PRIMARY KEY,next_at REAL,blocked REAL,attempts INTEGER,denied INTEGER)')
-        return db
+        try:
+            db.execute('CREATE TABLE IF NOT EXISTS providers(host TEXT PRIMARY KEY,next_at REAL,blocked REAL,attempts INTEGER,denied INTEGER)')
+            return db
+        except BaseException:
+            db.close()
+            raise
 
     def reserve(self,url,interval=0):
         require_permitted_url(url)

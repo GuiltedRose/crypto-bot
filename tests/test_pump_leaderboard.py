@@ -39,7 +39,7 @@ class LeaderboardTests(unittest.TestCase):
         self.assertEqual(merged,[PINNED,LEADER])
         pinned=[str(Pubkey.new_unique()) for _ in range(32)]
         self.assertEqual(effective_wallets(pinned,rows,1001),pinned)
-    def test_collector_polls_discovered_wallet_but_reader_requires_fresh_confirmed_observation(self):
+    def test_collector_fixture_polls_discovered_wallet_but_reader_disables_unapproved_leaderboard(self):
         rows,_=parse_leaderboard(payload(),1001);received=[]
         class Board:
             def poll(self,now=None): return {'leaderboard_wallets':rows,'status':'ok'}
@@ -52,7 +52,10 @@ class LeaderboardTests(unittest.TestCase):
             collect_once(Watcher(),[PINNED],root,now=1001,leaderboard_source=Board())
             self.assertEqual(received,[PINNED,LEADER])
             read=read_signals([PINNED],root,now=1002)
-            self.assertEqual(read['signals'][0]['observations'][0]['wallet_origin'],'leaderboard')
+            # Cached leaderboard membership cannot authorize an unpinned wallet.
+            self.assertEqual(read['signals'],[])
+            self.assertEqual(read['leaderboard_wallets'],[])
+            self.assertNotIn(MINT,read['candidate_mints'])
             self.assertFalse(read['automatic_trade_approval'])
             report=json.loads((Path(root)/'status.json').read_text());report['wallet_checks'][LEADER]['status']='unavailable'
             (Path(root)/'status.json').write_text(json.dumps(report))

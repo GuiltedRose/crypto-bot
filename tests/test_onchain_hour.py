@@ -1,6 +1,7 @@
 import base64
 import copy
 import json
+import zlib
 from pathlib import Path
 import tempfile
 import unittest
@@ -67,6 +68,28 @@ class HourTests(unittest.TestCase):
         with self.store.connect() as db:
             db.execute("UPDATE raw_blocks SET raw_hash='bad' WHERE slot=2")
         self.assertFalse(audit_hour(self.store, 0, 3600, MINT, POOL)['replay_consistent'])
+
+    def test_retained_payload_and_both_metadata_hashes_are_independently_checked(self):
+        self.store.retain_blocks = True
+        self.helper.populated()
+        with self.store.connect() as db:
+            original=db.execute('SELECT raw,raw_hash FROM raw_blocks WHERE slot=2').fetchone()
+            canonical=db.execute('SELECT raw_hash FROM blocks WHERE slot=2').fetchone()[0]
+        cases=[(b'corrupt zlib',original['raw_hash'],canonical),
+               (zlib.compress(b'{}'),original['raw_hash'],canonical),
+               (original['raw'],'wrong-retained-hash',canonical),
+               (original['raw'],original['raw_hash'],'wrong-canonical-hash')]
+        for payload,retained_hash,canonical_hash in cases:
+            with self.subTest(retained=retained_hash,canonical=canonical_hash):
+                with self.store.connect() as db:
+                    db.execute('UPDATE raw_blocks SET raw=?,raw_hash=? WHERE slot=2',(payload,retained_hash))
+                    db.execute('UPDATE blocks SET raw_hash=? WHERE slot=2',(canonical_hash,))
+                with self.assertRaises(ValueError): self.store.retained_block(2)
+                self.assertFalse(audit_hour(self.store,0,3600,MINT,POOL)['replay_consistent'])
+        with self.store.connect() as db:
+            db.execute('UPDATE raw_blocks SET raw=?,raw_hash=? WHERE slot=2',tuple(original))
+            db.execute('UPDATE blocks SET raw_hash=? WHERE slot=2',(canonical,))
+        self.assertTrue(audit_hour(self.store,0,3600,MINT,POOL)['replay_consistent'])
 
     def test_altered_canonical_events_and_unbracketed_windows_fail(self):
         self.store.retain_blocks = True

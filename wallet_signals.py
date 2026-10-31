@@ -207,12 +207,14 @@ def migrate_legacy_cache(directory):
     if directory.resolve() != DEFAULT_DIRECTORY.resolve() or destination.exists() or not legacy.exists():
         return
     source = sqlite3.connect(legacy.resolve().as_uri()+'?mode=ro', uri=True)
-    target = sqlite3.connect(destination)
     try:
-        source.backup(target)
+        target = sqlite3.connect(destination)
+        try:
+            source.backup(target)
+        finally:
+            target.close()
     finally:
         source.close()
-        target.close()
 
 
 def main():

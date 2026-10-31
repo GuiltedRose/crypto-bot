@@ -47,14 +47,16 @@ class HotTokenTests(unittest.TestCase):
         interest=social_interest(row,1002,DipRules())
         self.assertTrue(interest['hot_watched_overlap']);self.assertTrue(interest['present'])
         self.assertFalse(interest['independent_human_verified'])
-    def test_shared_reader_adds_fresh_hot_coins_without_inventing_wallet_buys(self):
+    def test_shared_reader_rejects_unapproved_cached_hot_coins_without_inventing_wallet_buys(self):
         with tempfile.TemporaryDirectory() as root:
             rows,_=parse_hot_tokens(payload(),1001)
             report={'schema':1,'watchlist_digest':digest([WALLET]),'published_at':1001,
                 'wallet_checks':{},'signals':[],'callouts':[],'hot_tokens':rows,'candidate_mints':[],'errors':{},'status':'bounded_sample'}
             (Path(root)/'status.json').write_text(json.dumps(report))
             read=read_signals([WALLET],root,now=1002)
-            self.assertIn(MINT,read['candidate_mints']);self.assertEqual(read['signals'],[])
+            self.assertNotIn(MINT,read['candidate_mints'])
+            self.assertEqual(read['hot_tokens'],[])
+            self.assertEqual(read['signals'],[])
             self.assertFalse(read['automatic_trade_approval'])
     def test_hot_source_failure_does_not_erase_existing_wallet_feed(self):
         class Watcher:

@@ -60,7 +60,7 @@ class WatchlistTests(unittest.TestCase):
 
     def test_retained_coin_is_revisited_even_after_it_leaves_incoming_feeds(self):
         from types import SimpleNamespace
-        from unittest.mock import patch
+        from unittest.mock import Mock, patch
         from run_meme_live import tick
         self.watch.observe(self.row,self.result,self.rules)
         observed=[];test=self
@@ -72,12 +72,14 @@ class WatchlistTests(unittest.TestCase):
             def poll(self,wallets): return {}
             def read_context(self,wallets): return {'status':'bounded_sample','callouts':[],'signals':[]}
         state={'position':None,'pending':None,'halted':False,'realized_pnl_usd':0}
-        engine=SimpleNamespace(store=SimpleNamespace(db=self.db,state=state,save=lambda *args:None),
+        engine=SimpleNamespace(store=SimpleNamespace(db=self.db,state=state,save=lambda *args:None,refresh_learning_model=Mock()),
                                rules=self.rules,execute=False,rpc=None,user="user",mark=lambda equity:None,
+                               loss_streak_cooldown=lambda now:None,
                                prepare=lambda *args:copy.deepcopy(self.result))
         incoming=[str(Pubkey.new_unique()) for _ in range(15)]
         with patch('run_meme_live.valuation',return_value=100),patch('run_meme_live.wallet_equity',return_value=6.5),patch('run_meme_live.rank_candidate_mints',return_value=incoming),patch('meme_watchlist.time.time',return_value=1060):
             result=tick(engine,Sources(),Feed(),['wallet'],[],False)
+        engine.store.refresh_learning_model.assert_called_once_with()
         self.assertEqual(observed[0],self.mint)
         self.assertEqual(len(set(observed)),10)
         self.assertGreater(result['watched_candidates'],0)

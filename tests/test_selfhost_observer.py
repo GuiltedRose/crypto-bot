@@ -1,5 +1,6 @@
 """Operator-run tests. Not executed during prototype preparation."""
 import copy
+from contextlib import closing
 import json
 from pathlib import Path
 import shutil
@@ -58,9 +59,10 @@ class LocalBridgeTests(unittest.TestCase):
             with self.assertRaises(ValueError):open_isolated(path)
             self.assertEqual(open_isolated(path,resume=True).metrics(),store.metrics())
             other=Path(root)/'paper.sqlite'
-            with sqlite3.connect(other) as db:db.execute('CREATE TABLE paper_positions(id INTEGER)')
+            with closing(sqlite3.connect(other)) as db, db:
+                db.execute('CREATE TABLE paper_positions(id INTEGER)')
             with self.assertRaises(ValueError):open_isolated(other,resume=True)
-            with sqlite3.connect(other) as db:
+            with closing(sqlite3.connect(other)) as db:
                 self.assertIsNone(db.execute("SELECT 1 FROM sqlite_master WHERE name='blocks'").fetchone())
 
 

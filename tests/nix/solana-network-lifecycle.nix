@@ -27,9 +27,13 @@ pkgs.testers.runNixOSTest {
     specialisation.reconfigured.configuration.services.solana-budget-isolation.uploadKbytes = lib.mkForce 8;
     users.users.solana-fixture = { isSystemUser = true; group = "solana-fixture"; };
     users.groups.solana-fixture = {};
-    systemd.services.solana-fixture.serviceConfig = {
-      User = "solana-fixture";
-      ExecStart = "${pkgs.coreutils}/bin/sleep infinity";
+    systemd.services.solana-fixture = {
+      enable = true;
+      wantedBy = []; # Install the unit without automatic startup.
+      serviceConfig = {
+        User = "solana-fixture";
+        ExecStart = "${pkgs.coreutils}/bin/sleep infinity";
+      };
     };
   };
   testScript = ''
@@ -42,11 +46,25 @@ pkgs.testers.runNixOSTest {
     machine.fail("systemctl is-active solana-budget-network.service")
     machine.fail("systemctl is-active solana-fixture.service")
 
+    # Explicit inspection loads the installed unit without starting it.
+    machine.succeed("systemctl cat solana-fixture.service")
+    assert machine.succeed("systemctl show solana-fixture.service -p LoadState --value").strip() == "loaded"
+    assert machine.succeed("systemctl show solana-fixture.service -p ActiveState --value").strip() == "inactive"
+
+    def reset_failed_units():
+        for unit in ("solana-budget-network.service", "solana-fixture.service"):
+            assert machine.succeed(f"systemctl show {unit} -p LoadState --value").strip() == "loaded"
+            # Dependency failures may leave an inactive fixture eligible for GC.
+            # Only failed units need reset; failed state keeps the unit loaded.
+            status, _ = machine.execute(f"systemctl is-failed --quiet {unit}")
+            if status == 0:
+                machine.succeed(f"systemctl reset-failed {unit}")
+
     def usage():
         return int(machine.succeed("sqlite3 /var/lib/solana-network/budget.sqlite 'select coalesce(sum(bytes),0) from grants'"))
 
     def begin():
-        machine.succeed("systemctl reset-failed solana-budget-network solana-fixture")
+        reset_failed_units()
         machine.succeed("systemctl start solana-fixture")
         machine.wait_for_unit("solana-fixture")
 
@@ -57,7 +75,7 @@ pkgs.testers.runNixOSTest {
     machine.fail("systemctl start solana-fixture")
     machine.fail("ip link show solana-host")
     machine.succeed("printf broken > /var/lib/solana-network/budget.sqlite; chmod 600 /var/lib/solana-network/budget.sqlite")
-    machine.succeed("systemctl reset-failed solana-budget-network solana-fixture")
+    reset_failed_units()
     machine.fail("systemctl start solana-fixture")
     machine.fail("ip link show solana-host")
     machine.succeed("rm /var/lib/solana-network/budget.sqlite") # corrupt fixture only
