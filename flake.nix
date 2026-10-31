@@ -45,7 +45,12 @@
               };
             };
           };
-        in { inherit pkgs; python = python.withPackages (p: [ p.solders p.websockets p.zstandard ]); });
+        in { inherit pkgs; pythonBase = python; python = python.withPackages (p: [ p.solders p.websockets p.zstandard ]); });
+      nativeReady = builtins.pathExists ./native/solana_binary/Cargo.lock;
+      nativePackage = system: import ./nix/native-decoder.nix {
+        inherit (environments.${system}) pkgs;
+        python = environments.${system}.pythonBase;
+      };
       # Explicit source filter: no state, .env, private config, wallet files or venv.
       source = nixpkgs.lib.cleanSourceWith {
         src = ./.;
@@ -82,7 +87,7 @@
                 --add-flags "$out/share/crypto-bot/solana_observer.py"
             '';
           };
-        });
+        } // pkgs.lib.optionalAttrs nativeReady { native-decoder = nativePackage system; });
       apps = eachSystem (system: {
         default = self.apps.${system}.indexer;
         indexer = { type = "app"; program = "${self.packages.${system}.default}/bin/crypto-bot-indexer"; };
@@ -92,7 +97,12 @@
       });
       devShells = eachSystem (system:
         let inherit (environments.${system}) pkgs python;
-        in { default = pkgs.mkShell { packages = [ python pkgs.sqlite pkgs.tmux pkgs.zstd pkgs.rustc pkgs.cargo pkgs.rustfmt pkgs.clippy ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.nftables pkgs.iproute2 pkgs.iputils pkgs.procps ]; }; });
+        in { default = pkgs.mkShell { packages = [ python pkgs.sqlite pkgs.tmux pkgs.zstd pkgs.rustc pkgs.cargo pkgs.rustfmt pkgs.clippy ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.nftables pkgs.iproute2 pkgs.iputils pkgs.procps ]; }; }
+          // pkgs.lib.optionalAttrs nativeReady {
+            native = pkgs.mkShell {
+              packages = [ (environments.${system}.pythonBase.withPackages (p: [ p.solders p.websockets p.zstandard (nativePackage system) ])) pkgs.rustc pkgs.cargo pkgs.rustfmt pkgs.clippy ];
+            };
+          });
       checks = eachSystem (system:
         let inherit (environments.${system}) pkgs python;
         in { indexer = pkgs.runCommand "crypto-bot-indexer-tests" { nativeBuildInputs = [ python pkgs.zstd ]; } ''

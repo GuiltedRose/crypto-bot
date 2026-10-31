@@ -1,0 +1,15 @@
+[package]
+name = "crypto-bot-solana-binary"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "_solana_binary"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+extension-module = ["pyo3/extension-module"]
+
+[dependencies]
+pyo3 = { version = "=0.23.5", default-features = false, features = ["macros"] }

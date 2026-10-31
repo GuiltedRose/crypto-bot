@@ -269,3 +269,7 @@ request features through [GitHub Issues](https://github.com/GuiltedRose/crypto-b
 without credentials or private state.
 
 Licensed under the [GNU Affero General Public License v3](LICENSE).
+
+Optional [Rust binary decoding](docs/native_decoder.md) preserves the Python/JSON
+pipeline. Native packaging requires a reviewed Cargo.lock; validation and benchmark
+commands are documented there. No performance measurements are available yet.
