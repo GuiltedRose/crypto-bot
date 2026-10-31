@@ -260,6 +260,10 @@ async def run_stream(ingester, endpoint, start, candles, batch=8, interval=5, co
             import sqlite3
             from solana_network_budget import Budget
             try:
+                if endpoint.get('backend')=='rust':
+                    from solana_rpc_compat import check_boundary
+                    check_boundary(endpoint)
+                    return
                 usage=Budget(configured['ledger']).report(time.time())
                 if usage['optional_collection_suspended']:
                     raise ValueError('Normal billing-cycle limit reached')

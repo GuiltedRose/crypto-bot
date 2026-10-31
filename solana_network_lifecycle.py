@@ -17,6 +17,7 @@ NS='solana-budget'
 VETH='solana-host'
 ADDRESS='169.254.203.2'
 OWNED=Path('/run/solana-budget-owned')
+STATUS=Path('/run/solana-budget-status.json')
 
 
 def run(*args, input=None, check=True):
@@ -69,6 +70,7 @@ def cleanup():
     close_boundary()
     run('ip','link','del',VETH,check=False)
     run('ip','netns','del',NS,check=False)
+    STATUS.unlink(missing_ok=True)
     OWNED.unlink(missing_ok=True)
     # No firewall-wide flush, no shared routing/firewall configuration removal.
 
@@ -124,10 +126,22 @@ def start(config):
         ns('ip','link','set','eth0','up')
         ns('ip','route','add','default','via','169.254.203.1')
         sample_os(budget,grant['id'],NS,time.time())
+        def publish():
+            usage=budget.report(time.time())
+            inode=int(ns('stat','-Lc','%i','/proc/self/ns/net').stdout.strip())
+            temporary=STATUS.with_suffix('.pending')
+            with temporary.open('w') as stream:
+                stream.write(json.dumps({'namespace_inode':inode,'expires':expiry,
+                                         'optional_allowed':not usage['optional_collection_suspended']}))
+                stream.flush(); os.fsync(stream.fileno())
+            temporary.chmod(0o644)
+            os.replace(temporary,STATUS)
+        publish()
         run('ip','link','set',VETH,'up')
         notify('READY=1\nSTATUS=Bounded Solana session; no automatic renewal')
         while not stopping and time.time()<expiry:
             sample_os(budget,grant['id'],NS,time.time())
+            publish()
             with budget.connect() as db:
                 counters=db.execute('SELECT rx+tx FROM grants WHERE id=?',(grant['id'],)).fetchone()[0]
             if counters>=grant['bytes']: break

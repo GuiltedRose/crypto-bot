@@ -1,4 +1,5 @@
 """Read-only finalized Pump indexer and local market shadow report."""
+from solana_rpc_compat import make_rpc
 import argparse
 import json
 from pathlib import Path
@@ -43,7 +44,7 @@ def main():
         if endpoint.get('enabled') is not True:
             continue
         store.register_source(endpoint['source_id'], endpoint['policy'])
-        endpoints.append(IndexRpc(endpoint))
+        endpoints.append(make_rpc(endpoint))
     if args.capture_sol_usd:
         if not endpoints:
             parser.error('A reviewed enabled RPC endpoint is required')

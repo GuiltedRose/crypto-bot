@@ -89,6 +89,17 @@
           };
          } // pkgs.lib.optionalAttrs nativeReady {
           native-decoder = nativePackage system;
+          native-rpc = import ./nix/native-decoder.nix { inherit pkgs; python = environments.${system}.pythonBase; rpc = true; };
+          native-rpc-app = pkgs.symlinkJoin {
+            name = "crypto-bot-native-rpc-app";
+            paths = [ self.packages.${system}.default ];
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            postBuild = ''
+              for program in $out/bin/crypto-bot-*; do
+                wrapProgram "$program" --prefix PYTHONPATH : "${self.packages.${system}.native-rpc}/${environments.${system}.pythonBase.sitePackages}"
+              done
+            '';
+          };
           native-app = pkgs.symlinkJoin {
             name = "crypto-bot-native-app";
             paths = [ self.packages.${system}.default ];
@@ -111,6 +122,9 @@
         let inherit (environments.${system}) pkgs python;
         in { default = pkgs.mkShell { packages = [ python pkgs.sqlite pkgs.tmux pkgs.zstd pkgs.rustc pkgs.cargo pkgs.rustfmt pkgs.clippy ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.nftables pkgs.iproute2 pkgs.iputils pkgs.procps ]; }; }
           // pkgs.lib.optionalAttrs nativeReady {
+            native-rpc = pkgs.mkShell {
+              packages = [ (environments.${system}.pythonBase.withPackages (p: [ p.solders p.websockets p.zstandard self.packages.${system}.native-rpc ])) pkgs.rustc pkgs.cargo ];
+            };
             native = pkgs.mkShell {
               packages = [ (environments.${system}.pythonBase.withPackages (p: [ p.solders p.websockets p.zstandard (nativePackage system) ])) pkgs.rustc pkgs.cargo pkgs.rustfmt pkgs.clippy ];
             };

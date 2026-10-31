@@ -16,7 +16,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertNotIn('flush ruleset',rules)
 
     def test_unowned_namespace_is_not_removed(self):
-        with patch('solana_network_lifecycle.OWNED') as owned, patch('solana_network_lifecycle.run') as run:
+        with patch('solana_network_lifecycle.STATUS'), patch('solana_network_lifecycle.OWNED') as owned, patch('solana_network_lifecycle.run') as run:
             owned.exists.return_value=False
             cleanup()
             run.assert_not_called()
@@ -30,7 +30,7 @@ class LifecycleTests(unittest.TestCase):
             run.assert_not_called()
 
     def test_cleanup_disables_link_before_destroying_namespace(self):
-        with patch('solana_network_lifecycle.OWNED') as owned, patch('solana_network_lifecycle.run') as run:
+        with patch('solana_network_lifecycle.STATUS'), patch('solana_network_lifecycle.OWNED') as owned, patch('solana_network_lifecycle.run') as run:
             owned.exists.return_value=True
             cleanup()
             calls=[call.args for call in run.call_args_list]

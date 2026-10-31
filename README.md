@@ -273,3 +273,7 @@ Licensed under the [GNU Affero General Public License v3](LICENSE).
 Optional [Rust binary decoding](docs/native_decoder.md) preserves the Python/JSON
 pipeline. Native packaging requires a reviewed Cargo.lock; validation and benchmark
 commands are documented there. No performance measurements are available yet.
+
+The [experimental Rust RPC transport](docs/rust_rpc_engine.md) is explicitly
+selectable; Python remains the default. Native event decoding/storage is unfinished,
+and all new transport/packaging code requires monolith validation.

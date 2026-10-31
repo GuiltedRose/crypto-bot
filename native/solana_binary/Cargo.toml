@@ -9,7 +9,43 @@ name = "_solana_binary"
 crate-type = ["cdylib", "rlib"]
 
 [features]
+rpc-engine = ["dep:tokio", "dep:reqwest", "dep:tokio-tungstenite", "dep:futures-util", "dep:serde_json", "dep:pyo3-async-runtimes", "dep:base64"]
 extension-module = ["pyo3/extension-module"]
 
 [dependencies]
 pyo3 = { version = "=0.23.5", default-features = false, features = ["macros"] }
+
+[dependencies.tokio]
+version = "=1.43.0"
+features = ["rt-multi-thread", "net", "time", "sync"]
+optional = true
+
+[dependencies.reqwest]
+version = "=0.12.12"
+default-features = false
+features = ["rustls-tls", "stream"]
+optional = true
+
+[dependencies.tokio-tungstenite]
+version = "=0.26.1"
+default-features = false
+features = ["connect", "rustls-tls-webpki-roots"]
+optional = true
+
+[dependencies.futures-util]
+version = "=0.3.31"
+features = ["sink"]
+optional = true
+
+[dependencies.serde_json]
+version = "=1.0.138"
+optional = true
+
+[dependencies.pyo3-async-runtimes]
+version = "=0.23.0"
+features = ["tokio-runtime"]
+optional = true
+
+[dependencies.base64]
+version = "=0.22.1"
+optional = true

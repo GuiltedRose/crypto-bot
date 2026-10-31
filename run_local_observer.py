@@ -2,6 +2,7 @@
 
 Not a validator, shred decoder or Geyser implementation. No external fallback.
 """
+from solana_rpc_compat import make_rpc
 import argparse
 import ipaddress
 import json
@@ -59,7 +60,7 @@ def main():
     engine = CandleEngine(store)
     for market in markets:
         engine.watch(market['mint'], market['pool'])
-    ingester = Ingester(store, [IndexRpc(e) for e in endpoints], config.get('reviewed_program_versions'))
+    ingester = Ingester(store, [make_rpc(e) for e in endpoints], config.get('reviewed_program_versions'))
     start = None if store.next_slot() is not None else args.start_slot
     results = follow(ingester, start, args.batch_slots) if args.loop else [ingester.step(start, args.batch_slots)]
     for result in results:

@@ -3,6 +3,7 @@
 UNTESTED integration. Notifications are provisional; existing finalized indexing
 supplies execution metadata, canonical order, recovery and candle completeness.
 """
+from solana_rpc_compat import make_rpc
 import argparse
 import asyncio
 import json
@@ -63,7 +64,7 @@ def prepare(config, database, resume=False):
     for row in endpoints:
         if row.get('policy',{}).get('storage_verified') is not True:
             raise ValueError('Every recovery endpoint needs reviewed storage rights')
-    clients=[IndexRpc(row) for row in endpoints]
+    clients=[make_rpc(row) for row in endpoints]
     store=open_isolated(database,resume)
     for row in endpoints:store.register_source(row['source_id'],row['policy'])
     candles=CandleEngine(store)
@@ -82,8 +83,9 @@ async def observe(config, database, start_slot=None, resume=False, batch=8, inte
         raise ValueError('Explicit initial finalized slot required; no implicit history skipping')
     # Keep the user's async connect/observe integration, with shared validation,
     # acknowledgments and recovery rather than a second competing WS client.
+    from solana_rpc_compat import stream_connector
     await run_stream(ingester,endpoint,start,candles,batch,interval,
-                     connector=connect,max_cycles=max_cycles)
+                     connector=stream_connector(endpoint,connect),max_cycles=max_cycles)
 
 
 def status(database):

@@ -1,5 +1,7 @@
 //! Binary structure only: no execution, address loading, program decoding or trust.
 #![deny(unsafe_code)]
+#[cfg(feature = "rpc-engine")]
+mod rpc;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyBytesMethods, PyList, PyListMethods};
@@ -128,6 +130,8 @@ fn binding_input_len(raw: &[u8]) -> PyResult<usize> {
 
 #[pymodule]
 fn _solana_binary(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    #[cfg(feature = "rpc-engine")]
+    rpc::register(module)?;
     module.add_function(wrap_pyfunction!(benchmark_parse, module)?)?;
     module.add_function(wrap_pyfunction!(binding_input_len, module)?)?;
     module.add_function(wrap_pyfunction!(parse_transaction, module)?)
