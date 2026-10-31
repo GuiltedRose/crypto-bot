@@ -1,129 +1,241 @@
-"""UNTESTED bounded CPU shadow models. Never used to authorize orders.
 
-Linear soft-margin SVM and actual LSTM with full truncated-window BPTT. No external
-ML runtime, pretrained data, networking or mutation of existing neural weights.
+"""CPU-only SVM and LSTM models for unified learning.
+
+No network access, order execution, paid APIs, or GPU dependencies.
+All inputs are bounded and finite. Training is deterministic.
 """
 import math
 import random
 
-MAX_ROWS=1024
-MAX_INPUTS=128
-MAX_STEPS=8
-HIDDEN=4
+MAX_ROWS = 1024
+MAX_INPUTS = 128
+MAX_STEPS = 8
+HIDDEN = 4
 
 
-def sigmoid(value):return 1/(1+math.exp(-max(-30.,min(30.,value))))
+def sigmoid(x):
+    x = max(-30.0, min(30.0, x))
+    return 1.0 / (1.0 + math.exp(-x))
 
 
-def vector(values):
-    if not isinstance(values,list) or not 1<=len(values)<=MAX_INPUTS or any(type(v) not in (int,float) or not math.isfinite(v) or abs(v)>1 for v in values):
-        raise ValueError('Expected bounded finite normalized features')
-    return values
+def vector(x):
+    if (not isinstance(x, list) or not 1 <= len(x) <= MAX_INPUTS
+            or any(type(v) not in (int, float)
+                   or not math.isfinite(v) or abs(v) > 1 for v in x)):
+        raise ValueError("Expected bounded normalized feature vector")
+    return x
 
 
-def rows(samples,sequential=False):
-    if not 1<=len(samples)<=MAX_ROWS:raise ValueError('Sample budget exceeded')
-    size=None
-    for x,y in samples:
-        if type(y) is not int or y not in (0,1):raise ValueError('Verified binary target required')
-        if sequential and not 1<=len(x)<=MAX_STEPS:raise ValueError('Sequence budget exceeded')
-        for point in x if sequential else [x]:
+def rows(samples, sequential=False):
+    if not 1 <= len(samples) <= MAX_ROWS:
+        raise ValueError("Sample budget exceeded")
+    size = None
+    for x, y in samples:
+        if type(y) is not int or y not in (0, 1):
+            raise ValueError("Verified binary target required")
+        points = x if sequential else [x]
+        if sequential and not 1 <= len(points) <= MAX_STEPS:
+            raise ValueError("Sequence budget exceeded")
+        for point in points:
             vector(point)
-            if size is None:size=len(point)
-            if len(point)!=size:raise ValueError('Feature schema mismatch')
+            if size is None:
+                size = len(point)
+            if len(point) != size:
+                raise ValueError("Feature size mismatch")
     return size
 
 
-def fit_svm(samples):
-    size=rows(samples);weights=[0.]*size;bias=0.
-    for _ in range(5):
-        for x,label in samples:
-            target=1 if label else -1
-            margin=target*(sum(w*v for w,v in zip(weights,x))+bias)
-            weights=[max(-8.,min(8.,w-.01*(.01*w-(target*v if margin<1 else 0)))) for w,v in zip(weights,x)]
-            if margin<1:bias=max(-8.,min(8.,bias+.01*target))
-    return {'family':'svm','weights':weights,'bias':bias,'calibration':None}
+def fit_svm(samples, epochs=20, rate=0.01, penalty=0.01):
+    size = rows(samples)
+    weights = [0.0] * size
+    bias = 0.0
+    for _ in range(epochs):
+        for x, label in samples:
+            y = 1 if label else -1
+            margin = y * (sum(a * b for a, b in zip(weights, x)) + bias)
+            gradients = [
+                penalty * w - (y * v if margin < 1 else 0.0)
+                for w, v in zip(weights, x)
+            ]
+            weights = [
+                max(-8.0, min(8.0, w - rate * g))
+                for w, g in zip(weights, gradients)
+            ]
+            if margin < 1:
+                bias = max(-8.0, min(8.0, bias + rate * y))
+    return {
+        "family": "svm",
+        "weights": weights,
+        "bias": bias,
+        "calibration": None,
+    }
 
 
-def margin(model,x):
+def margin(model, x):
     vector(x)
-    if len(x)!=len(model['weights']):raise ValueError('Feature mismatch')
-    return sum(w*v for w,v in zip(model['weights'],x))+model['bias']
+    if len(x) != len(model["weights"]):
+        raise ValueError("Feature size mismatch")
+    return sum(a * b for a, b in zip(model["weights"], x)) + model["bias"]
 
 
-def calibrate_svm(model,samples):
-    rows(samples);a,b=1.,0.
-    for _ in range(20):
-        for x,label in samples:
-            value=margin(model,x);error=sigmoid(a*value+b)-label
-            a=max(0.,min(8.,a-.01*error*value));b=max(-8.,min(8.,b-.01*error))
-    return {**model,'calibration':[a,b]}
+def calibrate_svm(model, samples):
+    rows(samples)
+    if not samples or len({y for _, y in samples}) < 2:
+        raise ValueError("Independent two-class calibration required")
+    a, b = 1.0, 0.0
+    for _ in range(50):
+        for x, label in samples:
+            m = margin(model, x)
+            error = sigmoid(a * m + b) - label
+            a = max(0.0, min(8.0, a - 0.01 * error * m))
+            b = max(-8.0, min(8.0, b - 0.01 * error))
+    return {**model, "calibration": [a, b]}
 
 
 def initialize_lstm(size):
-    rng=random.Random(42)
-    return {'family':'lstm','size':size,'weights':[[[rng.uniform(-.1,.1) for _ in range(size+HIDDEN)] for _ in range(HIDDEN)] for _ in range(4)],
-            'bias':[[1. if gate==1 else 0. for _ in range(HIDDEN)] for gate in range(4)],
-            'output':[rng.uniform(-.1,.1) for _ in range(HIDDEN)],'output_bias':0.}
+    if type(size) is not int or not 1 <= size <= MAX_INPUTS:
+        raise ValueError("Invalid input width")
+    rng = random.Random(42)
+    return {
+        "family": "lstm",
+        "size": size,
+        "weights": [
+            [
+                [rng.uniform(-0.1, 0.1) for _ in range(size + HIDDEN)]
+                for _ in range(HIDDEN)
+            ]
+            for _ in range(4)
+        ],
+        "bias": [
+            [1.0 if gate == 1 else 0.0 for _ in range(HIDDEN)]
+            for gate in range(4)
+        ],
+        "output": [rng.uniform(-0.1, 0.1) for _ in range(HIDDEN)],
+        "output_bias": 0.0,
+    }
 
 
-def forward_lstm(model,sequence):
-    if not 1<=len(sequence)<=MAX_STEPS:raise ValueError('Sequence budget exceeded')
-    hidden=[0.]*HIDDEN;cell=[0.]*HIDDEN;cache=[]
+def forward_lstm(model, sequence):
+    if not isinstance(sequence, list) or not 1 <= len(sequence) <= MAX_STEPS:
+        raise ValueError("Invalid LSTM window")
+    h, c, cache = [0.0] * HIDDEN, [0.0] * HIDDEN, []
     for x in sequence:
         vector(x)
-        if len(x)!=model['size']:raise ValueError('Feature mismatch')
-        joined=x+hidden;previous=cell
-        gates=[]
+        if len(x) != model["size"]:
+            raise ValueError("LSTM feature size mismatch")
+        joined, previous = x + h, c[:]
+        gates = []
         for gate in range(4):
-            logits=[sum(w*v for w,v in zip(weights,joined))+bias for weights,bias in zip(model['weights'][gate],model['bias'][gate])]
-            gates.append([math.tanh(v) if gate==3 else sigmoid(v) for v in logits])
-        incoming,forget,output,proposal=gates
-        cell=[f*c+i*g for f,c,i,g in zip(forget,previous,incoming,proposal)]
-        hidden=[o*math.tanh(c) for o,c in zip(output,cell)]
-        cache.append((joined,previous,gates,cell,hidden))
-    probability=sigmoid(sum(w*h for w,h in zip(model['output'],hidden))+model['output_bias'])
-    return probability,cache
+            logits = [
+                sum(w * v for w, v in zip(weights, joined)) + bias
+                for weights, bias in zip(
+                    model["weights"][gate], model["bias"][gate]
+                )
+            ]
+            gates.append([
+                math.tanh(v) if gate == 3 else sigmoid(v) for v in logits
+            ])
+        incoming, forget, output, proposal = gates
+        c = [f * old + i * g for f, old, i, g in
+             zip(forget, previous, incoming, proposal)]
+        h = [o * math.tanh(v) for o, v in zip(output, c)]
+        cache.append((joined, previous, gates, c[:], h[:]))
+    probability = sigmoid(
+        sum(w * v for w, v in zip(model["output"], h))
+        + model["output_bias"]
+    )
+    return probability, cache
 
 
-def fit_lstm(samples):
-    size=rows(samples,True);model=initialize_lstm(size)
-    for _ in range(3):
-        for sequence,label in samples:
-            probability,cache=forward_lstm(model,sequence)
-            error=probability-label
-            dw=[[[0.]*(size+HIDDEN) for _ in range(HIDDEN)] for _ in range(4)]
-            db=[[0.]*HIDDEN for _ in range(4)]
-            dh=[error*w for w in model['output']];dc=[0.]*HIDDEN
-            for joined,previous,gates,cell,hidden in reversed(cache):
-                incoming,forget,output,proposal=gates
-                total=[c+h*o*(1-math.tanh(v)**2) for c,h,o,v in zip(dc,dh,output,cell)]
-                derivatives=[
-                    [v*g*i*(1-i) for v,g,i in zip(total,proposal,incoming)],
-                    [v*c*f*(1-f) for v,c,f in zip(total,previous,forget)],
-                    [h*math.tanh(c)*o*(1-o) for h,c,o in zip(dh,cell,output)],
-                    [v*i*(1-g*g) for v,i,g in zip(total,incoming,proposal)]]
-                djoined=[0.]*(size+HIDDEN)
+def fit_lstm(samples, epochs=5, rate=0.005):
+    size = rows(samples, sequential=True)
+    model = initialize_lstm(size)
+
+    def update(value, gradient):
+        gradient = max(-1.0, min(1.0, gradient))
+        return max(-8.0, min(8.0, value - rate * gradient))
+
+    for _ in range(epochs):
+        for sequence, label in samples:
+            probability, cache = forward_lstm(model, sequence)
+            error = probability - label
+            output_weights = model["output"][:]
+            dw = [
+                [[0.0] * (size + HIDDEN) for _ in range(HIDDEN)]
+                for _ in range(4)
+            ]
+            db = [[0.0] * HIDDEN for _ in range(4)]
+            dh = [error * w for w in output_weights]
+            dc = [0.0] * HIDDEN
+
+            for joined, previous, gates, cell, hidden in reversed(cache):
+                incoming, forget, output, proposal = gates
+                total = [
+                    dc[j] + dh[j] * output[j] *
+                    (1 - math.tanh(cell[j]) ** 2)
+                    for j in range(HIDDEN)
+                ]
+                derivatives = [
+                    [
+                        total[j] * proposal[j] * incoming[j] *
+                        (1 - incoming[j])
+                        for j in range(HIDDEN)
+                    ],
+                    [
+                        total[j] * previous[j] * forget[j] *
+                        (1 - forget[j])
+                        for j in range(HIDDEN)
+                    ],
+                    [
+                        dh[j] * math.tanh(cell[j]) * output[j] *
+                        (1 - output[j])
+                        for j in range(HIDDEN)
+                    ],
+                    [
+                        total[j] * incoming[j] *
+                        (1 - proposal[j] ** 2)
+                        for j in range(HIDDEN)
+                    ],
+                ]
+                djoined = [0.0] * (size + HIDDEN)
                 for gate in range(4):
                     for unit in range(HIDDEN):
-                        gradient=derivatives[gate][unit];db[gate][unit]+=gradient
-                        for j,value in enumerate(joined):
-                            dw[gate][unit][j]+=gradient*value
-                            djoined[j]+=gradient*model['weights'][gate][unit][j]
-                dh=djoined[size:];dc=[v*f for v,f in zip(total,forget)]
-            def step(value,gradient):return max(-8.,min(8.,value-.005*max(-1.,min(1.,gradient))))
+                        grad = derivatives[gate][unit]
+                        db[gate][unit] += grad
+                        for index, value in enumerate(joined):
+                            dw[gate][unit][index] += grad * value
+                            djoined[index] += (
+                                grad * model["weights"][gate][unit][index]
+                            )
+                dh = djoined[size:]
+                dc = [total[j] * forget[j] for j in range(HIDDEN)]
+
+            last_hidden = cache[-1][-1]
             for gate in range(4):
                 for unit in range(HIDDEN):
-                    model['weights'][gate][unit]=[step(w,g) for w,g in zip(model['weights'][gate][unit],dw[gate][unit])]
-                    model['bias'][gate][unit]=step(model['bias'][gate][unit],db[gate][unit])
-            model['output']=[step(w,error*h) for w,h in zip(model['output'],cache[-1][-1])]
-            model['output_bias']=step(model['output_bias'],error)
+                    model["weights"][gate][unit] = [
+                        update(w, grad)
+                        for w, grad in zip(
+                            model["weights"][gate][unit], dw[gate][unit]
+                        )
+                    ]
+                    model["bias"][gate][unit] = update(
+                        model["bias"][gate][unit], db[gate][unit]
+                    )
+            model["output"] = [
+                update(w, error * h)
+                for w, h in zip(output_weights, last_hidden)
+            ]
+            model["output_bias"] = update(model["output_bias"], error)
     return model
 
 
-def predict(model,x):
-    if model['family']=='svm':
-        if model['calibration'] is None:raise ValueError('SVM needs independent calibration data')
-        a,b=model['calibration'];return sigmoid(a*margin(model,x)+b)
-    if model['family']=='lstm':return forward_lstm(model,x)[0]
-    raise ValueError('Unknown model family')
+def predict(model, x):
+    if model["family"] == "svm":
+        if model.get("calibration") is None:
+            raise ValueError("Uncalibrated SVM")
+        a, b = model["calibration"]
+        return sigmoid(a * margin(model, x) + b)
+    if model["family"] == "lstm":
+        return forward_lstm(model, x)[0]
+    raise ValueError("Unsupported model family")
