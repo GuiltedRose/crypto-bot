@@ -150,14 +150,17 @@ class StreamHints:
                 return False
             old_hint=db.execute('SELECT slot FROM stream_hints WHERE signature=?',(value['signature'],)).fetchone()
             if old_hint:
-                db.execute("INSERT OR REPLACE INTO stream_state VALUES('gap','\"signature observed on another slot/fork\"')")
-                db.execute('UPDATE stream_hints SET slot=max(slot,?) WHERE signature=?',(slot,value['signature']))
+                if old_hint[0]!=slot:
+                    db.execute("INSERT OR REPLACE INTO stream_state VALUES('gap','\"signature observed on another slot/fork\"')")
+                    db.execute('UPDATE stream_hints SET slot=max(slot,?) WHERE signature=?',(slot,value['signature']))
             else:
                 db.execute('INSERT INTO stream_hints VALUES(?,?,?)',(value['signature'],slot,received))
         return True
 
     def report(self):
-        return self.read_status(self.store)
+        report=self.read_status(self.store)
+        if report['active_source_id'] is None: report['active_source_id']=self.source
+        return report
 
     @staticmethod
     def read_status(store):
@@ -168,7 +171,7 @@ class StreamHints:
             swaps=db.execute("SELECT count(*) FROM events e JOIN blocks b ON e.slot=b.slot WHERE e.kind='swap' AND b.issues='[]'").fetchone()[0]
             matched=db.execute('SELECT avg(o.received-b.time) FROM stream_observations o JOIN blocks b ON o.slot=b.slot WHERE o.received>=b.time AND o.received-b.time<=86400').fetchone()[0]
             states={row[0]:json.loads(row[1]) for row in db.execute('SELECT name,value FROM stream_state')}
-        return {'notifications':counts,'pending_hints':pending[0],
+        return {'active_source_id':states.get('active_source'),'notifications':counts,'pending_hints':pending[0],
                 'oldest_pending_age_seconds':max(0,time.time()-pending[1]) if pending[1] is not None else None,
                 'finalized_relevant_transactions':finalized,'verified_swap_events':swaps,
                 'blocktime_to_receipt_seconds_proxy':matched,'states':states,
@@ -261,15 +264,16 @@ async def run_stream(ingester, endpoint, start, candles, batch=8, interval=5, co
     hints=StreamHints(ingester.store,endpoint['source_id'],
                       capacity=endpoint.get('pending_capacity',4096),
                       observation_limit=endpoint.get('observation_limit',100000))
+    active_endpoint=endpoint
     def check_network_budget():
-        configured=endpoint.get('network_budget')
+        configured=active_endpoint.get('network_budget')
         if configured:
             import sqlite3
             from solana_network_budget import Budget
             try:
-                if endpoint.get('backend')=='rust':
+                if active_endpoint.get('backend')=='rust' or 'status_file' in configured:
                     from solana_rpc_compat import check_boundary
-                    check_boundary(endpoint)
+                    check_boundary(active_endpoint)
                     return
                 usage=Budget(configured['ledger']).report(time.time())
                 if usage['optional_collection_suspended']:
@@ -306,8 +310,11 @@ async def run_stream(ingester, endpoint, start, candles, batch=8, interval=5, co
         approved.append(candidate)
     if not approved: raise ConnectionError('No approved stream source available')
     async def supervise_stream():
+        nonlocal hints,active_endpoint
         for index,candidate in enumerate(approved):
             current=StreamHints(ingester.store,candidate['source_id'],hints.capacity,hints.observation_limit)
+            hints=current
+            active_endpoint=candidate
             selected=connector if candidate['source_id']==endpoint['source_id'] else stream_connector(candidate,websockets.connect)
             current.state('active_source',candidate['source_id'])
             try:

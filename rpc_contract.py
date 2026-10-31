@@ -59,3 +59,36 @@ def remote_error(code,source_id):
     if code in (-32001,-32004,-32009,-32011,-32014):return RpcHistoryUnavailable(source_id,code)
     if code in (-32600,-32602,-32015):return RpcEvidenceError('Unsupported or invalid RPC request/evidence; operator review required')
     return RpcRemoteError(code,source_id)
+
+
+def rpc_result(text,method,source_id,budget,url):
+    """Identical strict JSON-RPC contract for Python and Rust response bodies."""
+    import json
+    def invalid_constant(_):raise RpcEvidenceError('Nonfinite JSON value')
+    def object_pairs(pairs):
+        result={}
+        for key,value in pairs:
+            if key in result:raise RpcEvidenceError('Duplicate JSON object key')
+            result[key]=value
+        return result
+    try:
+        payload=json.loads(text,object_pairs_hook=object_pairs,parse_constant=invalid_constant)
+        if not isinstance(payload,dict) or payload.get('jsonrpc')!='2.0' or type(payload.get('id')) is not int or payload['id']!=1:
+            raise RpcEvidenceError('Invalid JSON-RPC identity/version')
+        if ('result' in payload)==('error' in payload):raise RpcEvidenceError('Ambiguous JSON-RPC envelope')
+        if 'error' in payload:
+            error=payload['error']
+            if not isinstance(error,dict) or type(error.get('code')) is not int:raise RpcEvidenceError('Invalid JSON-RPC error')
+        else:
+            value=response_value(method,payload['result'],source_id)
+            budget.success(url)
+            return value
+    except RpcEvidenceError:raise
+    except (ValueError,TypeError,RecursionError,UnicodeError):
+        raise RpcEvidenceError('Malformed JSON-RPC response') from None
+    code=payload['error']['code']
+    if code in (401,403):
+        budget.failure(url,code)
+        raise SourceAccessBlocked('RPC source access denied')
+    if code in (429,-32005):budget.failure(url,429 if code==429 else 503)
+    raise remote_error(code,source_id)

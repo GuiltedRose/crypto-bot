@@ -33,8 +33,9 @@ class CompatTests(unittest.TestCase):
                 if expected:self.assertEqual(check_boundary(endpoint),7)
                 else:
                     with self.assertRaises(SourceAccessBlocked):check_boundary(endpoint)
-            path.return_value.stat.return_value.st_mtime=0
-            with self.assertRaises(SourceAccessBlocked):check_boundary(endpoint)
+            for stamp in (0,101):
+                path.return_value.stat.return_value.st_mtime=stamp
+                with self.assertRaises(SourceAccessBlocked):check_boundary(endpoint)
 
     def test_default_and_auto_stay_python(self):
         for mode in ('python','auto'):
@@ -74,6 +75,18 @@ class CompatTests(unittest.TestCase):
         rpc=self.rpc()
         with patch('solana_rpc_compat.check_boundary',side_effect=SourceAccessBlocked('quota')),self.assertRaises(SourceAccessBlocked):rpc.call('getSlot',[])
         rpc._transport.request.assert_not_called()
+
+    def test_explicit_close_does_not_mark_provider_unavailable(self):
+        rpc=self.rpc()
+        async def interrupted(*args):
+            rpc.close()
+            raise ConnectionError('closed socket')
+        rpc._transport.request.side_effect=interrupted
+        async def scenario():
+            with patch('solana_rpc_compat.check_boundary'),self.assertRaises(RuntimeError):
+                await rpc.call_async('getSlot',[])
+        asyncio.run(scenario())
+        rpc.budget.failure.assert_not_called()
 
     def test_cancellation_propagates_without_retry(self):
         rpc=self.rpc();rpc._transport.request.side_effect=asyncio.CancelledError

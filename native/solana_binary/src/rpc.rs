@@ -91,16 +91,19 @@ impl NativeHttp {
 #[pymethods]
 impl NativeHttp {
     #[new]
-    fn new(endpoint:&str,namespace_inode:u64,allow_loopback:bool)->PyResult<Self> {
+    #[pyo3(signature=(endpoint,namespace_inode,allow_loopback,tcp_nodelay=None))]
+    fn new(endpoint:&str,namespace_inode:u64,allow_loopback:bool,tcp_nodelay:Option<bool>)->PyResult<Self> {
         boundary(namespace_inode)?;
         let endpoint=url(endpoint,false,allow_loopback)?;
         // Bind pooled connections/timers to the one persistent Tokio runtime,
         // never to an ephemeral Python asyncio loop or caller's runtime.
         let _runtime=pyo3_async_runtimes::tokio::get_runtime().enter();
-        let client=reqwest::Client::builder().redirect(reqwest::redirect::Policy::none())
+        let mut builder=reqwest::Client::builder().redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(30)).connect_timeout(Duration::from_secs(15))
-            .pool_max_idle_per_host(1).pool_idle_timeout(Duration::from_secs(30)).no_proxy()
-            .build().map_err(|_|offline())?;
+            .pool_max_idle_per_host(1).pool_idle_timeout(Duration::from_secs(30)).no_proxy();
+        // Benchmark-only opt-in. None preserves the existing production default.
+        if let Some(enabled)=tcp_nodelay {builder=builder.tcp_nodelay(enabled);}
+        let client=builder.build().map_err(|_|offline())?;
         let (stop,_)=tokio::sync::watch::channel(false);
         Ok(Self {client:std::sync::Mutex::new(Some(client)),endpoint,inode:namespace_inode,busy:Arc::new(Semaphore::new(1)),stop})
     }

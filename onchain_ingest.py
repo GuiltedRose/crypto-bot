@@ -7,7 +7,7 @@ import zlib
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, build_opener
-from rpc_contract import RpcHistoryUnavailable, RpcEvidenceError, response_value, remote_error, http_error
+from rpc_contract import RpcHistoryUnavailable, RpcEvidenceError, response_value, remote_error, http_error, rpc_result
 from data_policy import SourceAccessBlocked
 from provider_limits import BUDGET
 from pump_narratives import NoRedirect
@@ -77,17 +77,7 @@ class IndexRpc:
         self.wire_bytes += len(raw)
         decoded = decode_rpc_body(raw, encoding)
         self.decoded_bytes += len(decoded)
-        payload = json.loads(decoded)
-        if 'error' in payload:
-            code = payload['error'].get('code')
-            if code in (401, 403):
-                self.budget.failure(self.url, code)
-                raise SourceAccessBlocked('RPC access denied; review authorization')
-            if code in (429, -32005):
-                self.budget.failure(self.url, 429 if code == 429 else 503)
-            raise remote_error(code,self.source)
-        self.budget.success(self.url)
-        return response_value(method,payload['result'],self.source)
+        return rpc_result(decoded,method,self.source,self.budget,self.url)
 
     def validate(self):
         if not self.validated:

@@ -15,7 +15,10 @@ RESULTS={'getGenesisHash':MAINNET, 'getSlot':7,'getBlocks':[5,6,7],
 
 
 class LocalRpcServer:
-    def __init__(self):
+    def __init__(self,server_nodelay=None,response_write='split'):
+        if response_write not in ('split','coalesced'):raise ValueError('Invalid fixture packetization')
+        if server_nodelay is not None and type(server_nodelay) is not bool:raise ValueError('Invalid fixture TCP option')
+        self.server_nodelay=server_nodelay;self.response_write=response_write;self.accepted_nodelay=set()
         self.lock=threading.Lock();self.requests=[];self.connections=0;self.sockets=set();self.script=[]
     def __enter__(self):
         owner=self
@@ -23,6 +26,8 @@ class LocalRpcServer:
             daemon_threads=True
             def get_request(self):
                 connection,address=super().get_request();connection.settimeout(3)
+                if owner.server_nodelay is not None:connection.setsockopt(socket.IPPROTO_TCP,socket.TCP_NODELAY,int(owner.server_nodelay))
+                owner.accepted_nodelay.add(connection.getsockopt(socket.IPPROTO_TCP,socket.TCP_NODELAY))
                 with owner.lock:owner.connections+=1;owner.sockets.add(connection)
                 return connection,address
             def shutdown_request(self,request):
@@ -50,13 +55,19 @@ class LocalRpcServer:
                 if step.get('chunked'):self.send_header('Transfer-Encoding','chunked')
                 else:self.send_header('Content-Length',str(step.get('declared_length',len(body))))
                 if step.get('redirect'):self.send_header('Location','http://127.0.0.1:1/never')
-                self.end_headers()
-                if step.get('declared_length',0)>64000000:return
+                if step.get('declared_length',0)>64000000:body=b''
                 if step.get('chunked'):
-                    for chunk in (body[:8],body[8:]):
-                        if chunk:self.wfile.write(f'{len(chunk):x}\r\n'.encode()+chunk+b'\r\n')
-                    self.wfile.write(b'0\r\n\r\n')
-                else:self.wfile.write(body)
+                    chunks=[chunk for chunk in (body[:8],body[8:]) if chunk]
+                    body=b''.join(f'{len(chunk):x}\r\n'.encode()+chunk+b'\r\n' for chunk in chunks)+b'0\r\n\r\n'
+                if owner.response_write=='coalesced':
+                    # Fixture-only A/B: one write instead of separate header/body
+                    # sendall calls. Preserve the exact generated HTTP headers.
+                    self._headers_buffer.append(b'\r\n')
+                    self.wfile.write(b''.join(self._headers_buffer)+body)
+                    self._headers_buffer.clear()
+                else:
+                    self.end_headers()
+                    self.wfile.write(body)
                 self.wfile.flush()
         self.server=Server(('127.0.0.1',0),Handler)
         self.url='http://127.0.0.1:'+str(self.server.server_port)

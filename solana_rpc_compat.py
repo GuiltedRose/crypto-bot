@@ -9,7 +9,7 @@ import threading
 from data_policy import SourceAccessBlocked, require_permitted_url
 from onchain_ingest import IndexRpc, READ_METHODS
 from wallet_watch import PublicRpcError
-from rpc_contract import response_value, remote_error, http_error
+from rpc_contract import response_value, remote_error, http_error, rpc_result
 
 
 def native_module():
@@ -32,7 +32,7 @@ def check_boundary(endpoint):
     path=Path(endpoint.get('network_budget',{}).get('status_file','/run/solana-budget-status.json'))
     try:
         stat=path.stat()
-        if path.is_symlink() or stat.st_uid!=0 or stat.st_mode & 0o022 or time.time()-stat.st_mtime>5:
+        if path.is_symlink() or stat.st_uid!=0 or stat.st_mode & 0o022 or not 0<=time.time()-stat.st_mtime<=5:
             raise ValueError('Untrusted/stale session status')
         with path.open('rb') as stream: raw=stream.read(4097)
         if len(raw)>4096: raise ValueError('Oversized session status')
@@ -45,7 +45,7 @@ def check_boundary(endpoint):
         if status['optional_allowed'] is not True: raise ValueError('Normal allocation exhausted')
         if endpoint.get('approved_namespace_inode',inode)!=inode: raise ValueError('Configured namespace mismatch')
     except Exception:
-        raise SourceAccessBlocked('Network session unavailable or unauthorized; no native connection') from None
+        raise SourceAccessBlocked('Network session unavailable or unauthorized; no RPC connection') from None
     require_permitted_url(endpoint['url'])
     return inode
 
@@ -76,6 +76,7 @@ class RustIndexRpc(IndexRpc):
         return text
 
     def _transport_error(self,error):
+        if self._closed: raise RuntimeError('RPC client closed during request') from None
         if isinstance(error,ConnectionError):
             self.budget.failure(self.url,503)
             raise error
@@ -120,25 +121,8 @@ class RustIndexRpc(IndexRpc):
             raise http_error(status,self.source)
         size=len(text.encode())
         self.wire_bytes+=size; self.decoded_bytes+=size
-        try:
-            result=json.loads(text)
-            if not isinstance(result,dict) or result.get('jsonrpc')!='2.0' or type(result.get('id')) is not int or result['id']!=1:
-                raise ValueError('Invalid RPC envelope')
-            if ('result' in result)==('error' in result): raise ValueError('Ambiguous RPC result')
-            if 'error' in result:
-                error=result['error']
-                if not isinstance(error,dict) or type(error.get('code')) is not int: raise ValueError('Invalid RPC error')
-            else:
-                self.budget.success(self.url)
-                return response_value(method,result['result'],self.source)
-        except (ValueError,TypeError,RecursionError):
-            raise SourceAccessBlocked('Malformed RPC evidence; no backend retry') from None
-        code=result['error']['code']
-        if code in (401,403):
-            self.budget.failure(self.url,code)
-            raise SourceAccessBlocked('RPC source access denied')
-        if code in (429,-32005): self.budget.failure(self.url,429 if code==429 else 503)
-        raise remote_error(code,self.source)
+        return rpc_result(text,method,self.source,self.budget,self.url)
+
     def decode_binary(self,response,*,tx_index,commitment):
         from solana_binary_ingest import ingest_rpc_response
         return ingest_rpc_response(response,source_id=self.source,policy=self.endpoint['policy'],

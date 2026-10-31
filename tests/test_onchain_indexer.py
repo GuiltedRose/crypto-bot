@@ -441,7 +441,7 @@ class IndexerTests(unittest.TestCase):
         with patch('onchain_ingest.build_opener') as opener:
             response = opener.return_value.open.return_value.__enter__.return_value
             response.headers = {}
-            response.read.return_value = json.dumps({'error': {'code': 403}}).encode()
+            response.read.return_value = json.dumps({'jsonrpc':'2.0','id':1,'error': {'code': 403}}).encode()
             with self.assertRaises(SourceAccessBlocked): rpc.call('getSlot', [])
             with self.assertRaises(SourceAccessBlocked): rpc.call('getSlot', [])
             self.assertEqual(opener.return_value.open.call_count, 1)
