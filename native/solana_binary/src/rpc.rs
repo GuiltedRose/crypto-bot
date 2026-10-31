@@ -49,41 +49,72 @@ fn request(method: &str, params: &str) -> PyResult<String> {
     Ok(serde_json::json!({"jsonrpc":"2.0","id":1,"method":method,"params":params}).to_string())
 }
 
+type HttpReply = (u16,String,String);
 #[pyclass]
-struct NativeHttp { client: reqwest::Client, endpoint: reqwest::Url, inode: u64, busy: Arc<Semaphore> }
+struct NativeHttp {
+    client: std::sync::Mutex<Option<reqwest::Client>>, endpoint: reqwest::Url,
+    inode:u64, busy:Arc<Semaphore>, stop:tokio::sync::watch::Sender<bool>,
+}
+impl NativeHttp {
+    fn operation(&self,method:&str,params:&str)->PyResult<impl std::future::Future<Output=PyResult<HttpReply>>+Send+'static> {
+        boundary(self.inode)?;
+        let body=request(method,params)?;
+        let client=self.client.lock().map_err(|_|offline())?.as_ref().ok_or_else(offline)?.clone();
+        let endpoint=self.endpoint.clone(); let mut stop=self.stop.subscribe();
+        if *stop.borrow() {return Err(offline());}
+        let permit=self.busy.clone().try_acquire_owned().map_err(|_|PyRuntimeError::new_err("HTTP backpressure: one request already active"))?;
+        Ok(async move {
+            let _permit=permit;
+            tokio::select! {
+                biased;
+                _=stop.changed()=>Err(offline()),
+                result=async {
+                    let mut response=client.post(endpoint).header("Content-Type","application/json")
+                        .header("Accept-Encoding","identity").body(body).send().await.map_err(|_|offline())?;
+                    let status=response.status().as_u16();
+                    let retry=response.headers().get("retry-after").and_then(|v|v.to_str().ok()).unwrap_or("").chars().take(256).collect::<String>();
+                    if response.content_length().is_some_and(|n|n>64_000_000) {return Err(bad("oversized response"));}
+                    let encoding=response.headers().get("content-encoding").and_then(|v|v.to_str().ok()).unwrap_or("identity");
+                    if encoding!="identity" {return Err(bad("native response requires identity encoding"));}
+                    let mut bytes=Vec::new();
+                    while let Some(chunk)=response.chunk().await.map_err(|_|offline())? {
+                        if bytes.len()+chunk.len()>64_000_000 {return Err(bad("oversized response"));}
+                        bytes.extend_from_slice(&chunk);
+                    }
+                    Ok((status,retry,String::from_utf8(bytes).map_err(|_|bad("invalid response UTF8"))?))
+                }=>result,
+            }
+        })
+    }
+}
 #[pymethods]
 impl NativeHttp {
     #[new]
-    fn new(endpoint: &str, namespace_inode: u64, allow_loopback: bool) -> PyResult<Self> {
+    fn new(endpoint:&str,namespace_inode:u64,allow_loopback:bool)->PyResult<Self> {
         boundary(namespace_inode)?;
         let endpoint=url(endpoint,false,allow_loopback)?;
+        // Bind pooled connections/timers to the one persistent Tokio runtime,
+        // never to an ephemeral Python asyncio loop or caller's runtime.
+        let _runtime=pyo3_async_runtimes::tokio::get_runtime().enter();
         let client=reqwest::Client::builder().redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(30)).pool_max_idle_per_host(1).no_proxy()
-            .build().map_err(|_| offline())?;
-        Ok(Self {client,endpoint,inode:namespace_inode,busy:Arc::new(Semaphore::new(1))})
+            .timeout(Duration::from_secs(30)).connect_timeout(Duration::from_secs(15))
+            .pool_max_idle_per_host(1).pool_idle_timeout(Duration::from_secs(30)).no_proxy()
+            .build().map_err(|_|offline())?;
+        let (stop,_)=tokio::sync::watch::channel(false);
+        Ok(Self {client:std::sync::Mutex::new(Some(client)),endpoint,inode:namespace_inode,busy:Arc::new(Semaphore::new(1)),stop})
     }
-    fn request<'py>(&self, py: Python<'py>, method: &str, params: &str) -> PyResult<Bound<'py, PyAny>> {
-        boundary(self.inode)?;
-        let body=request(method,params)?;
-        let client=self.client.clone(); let endpoint=self.endpoint.clone();
-        let permit=self.busy.clone().try_acquire_owned().map_err(|_| PyRuntimeError::new_err("HTTP backpressure: one request already active"))?;
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let _permit=permit;
-            let mut response=client.post(endpoint).header("Content-Type","application/json")
-                .header("Accept-Encoding","identity").body(body).send().await.map_err(|_| offline())?;
-            let status=response.status().as_u16();
-            let retry=response.headers().get("retry-after").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
-            if response.content_length().is_some_and(|n| n>64_000_000) { return Err(bad("oversized response")); }
-            let encoding=response.headers().get("content-encoding").and_then(|v| v.to_str().ok()).unwrap_or("identity");
-            if encoding!="identity" { return Err(bad("native response requires identity encoding")); }
-            let mut bytes=Vec::new();
-            while let Some(chunk)=response.chunk().await.map_err(|_| offline())? {
-                if bytes.len()+chunk.len()>64_000_000 { return Err(bad("oversized response")); }
-                bytes.extend_from_slice(&chunk);
-            }
-            let text=String::from_utf8(bytes).map_err(|_| bad("invalid response UTF8"))?;
-            Ok((status,retry,text))
-        })
+    fn request<'py>(&self,py:Python<'py>,method:&str,params:&str)->PyResult<Bound<'py,PyAny>> {
+        pyo3_async_runtimes::tokio::future_into_py(py,self.operation(method,params)?)
+    }
+    fn request_sync(&self,py:Python<'_>,method:&str,params:&str)->PyResult<HttpReply> {
+        if tokio::runtime::Handle::try_current().is_ok() {return Err(PyRuntimeError::new_err("blocking RPC inside Tokio is forbidden"));}
+        let operation=self.operation(method,params)?;
+        py.allow_threads(move ||pyo3_async_runtimes::tokio::get_runtime().block_on(operation))
+    }
+    fn close(&self)->PyResult<()> {
+        self.stop.send_replace(true);
+        self.client.lock().map_err(|_|offline())?.take();
+        Ok(())
     }
 }
 
@@ -127,22 +158,40 @@ impl NativeSocket {
             tokio::select! {
                 biased;
                 _=stop.changed()=>Err(offline()),
-                result=tokio::time::timeout(Duration::from_secs(30),async {
+                result=async {
                     let mut guard=stream.lock().await;
                     let ws=guard.as_mut().ok_or_else(offline)?;
-                    for _ in 0..16 {
-                        match ws.next().await {
+                    let mut controls=0;
+                    let mut control_window=tokio::time::Instant::now();
+                    loop {
+                        let message=match tokio::time::timeout(Duration::from_secs(20),ws.next()).await {
+                            Ok(message)=>message,
+                            Err(_)=>{
+                                controls=0;
+                                let mut output=sink.lock().await;
+                                tokio::time::timeout(Duration::from_secs(10),output.as_mut().ok_or_else(offline)?.send(Message::Ping(b"solana-observer".to_vec().into())))
+                                    .await.map_err(|_|offline())?.map_err(|_|offline())?;
+                                drop(output);
+                                tokio::time::timeout(Duration::from_secs(10),ws.next()).await.map_err(|_|offline())?
+                            },
+                        };
+                        match message {
                             Some(Ok(Message::Text(text)))=>return Ok(text.to_string()),
                             Some(Ok(Message::Ping(data)))=>{
                                 let mut output=sink.lock().await;
-                                output.as_mut().ok_or_else(offline)?.send(Message::Pong(data)).await.map_err(|_|offline())?;
+                                tokio::time::timeout(Duration::from_secs(10),output.as_mut().ok_or_else(offline)?.send(Message::Pong(data)))
+                                    .await.map_err(|_|offline())?.map_err(|_|offline())?;
                             },
                             Some(Ok(Message::Pong(_)))=>(),
                             _=>return Err(offline()),
                         }
+                        if control_window.elapsed()>=Duration::from_secs(1) {
+                            controls=0;control_window=tokio::time::Instant::now();
+                        }
+                        controls+=1;
+                        if controls>16 {return Err(bad("excessive websocket control frames"));}
                     }
-                    Err(bad("excessive websocket control frames"))
-                })=>result.map_err(|_|offline())?,
+                }=>result,
             }
         })
     }

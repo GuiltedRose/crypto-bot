@@ -9,7 +9,8 @@ from data_policy import SourceAccessBlocked
 from solana_rpc_compat import make_rpc, RustIndexRpc, stream_connector, check_boundary
 from onchain_ingest import IndexRpc
 
-ENDPOINT={'url':'https://example.invalid','source_id':'fixture','backend':'rust','approved_namespace_inode':1}
+ENDPOINT={'url':'https://example.invalid','source_id':'fixture','backend':'rust','approved_namespace_inode':1,
+          'ws_url':'wss://example.invalid','policy':{'stream_verified':True}}
 
 
 class CompatTests(unittest.TestCase):
@@ -18,6 +19,7 @@ class CompatTests(unittest.TestCase):
         rpc=RustIndexRpc(ENDPOINT,budget)
         rpc._transport=MagicMock()
         rpc._transport.request=AsyncMock(return_value=(200,'',json.dumps({'jsonrpc':'2.0','id':1,'result':99})))
+        rpc._transport.request_sync.side_effect=lambda method,params:asyncio.run(rpc._transport.request(method,params))
         return rpc
 
     def test_read_only_session_status_and_expiry_fail_closed(self):
@@ -38,6 +40,14 @@ class CompatTests(unittest.TestCase):
         for mode in ('python','auto'):
             self.assertIs(type(make_rpc({**ENDPOINT,'backend':mode})),IndexRpc)
         self.assertIsInstance(make_rpc(ENDPOINT),RustIndexRpc)
+
+    def test_repeated_sync_calls_and_explicit_shutdown(self):
+        rpc=self.rpc()
+        with patch('solana_rpc_compat.check_boundary'):
+            for _ in range(8):self.assertEqual(rpc.call('getSlot',[]),99)
+        self.assertEqual(rpc._transport.request_sync.call_count,8)
+        rpc.close();rpc._transport.close.assert_called_once()
+        with self.assertRaises(RuntimeError):rpc.call('getSlot',[])
 
     def test_http_contract_and_no_signing(self):
         rpc=self.rpc()

@@ -13,7 +13,7 @@ try:
 except ImportError:
     NativeHttp=connect_ws=None
 
-ENABLED=os.environ.get('SOLANA_NATIVE_LOOPBACK_STRESS')=='1' and sys.platform=='linux' and NativeHttp is not None
+ENABLED=os.environ.get('SOLANA_NATIVE_LOOPBACK_STRESS')=='1' and sys.platform=='linux' and NativeHttp is not None and hasattr(NativeHttp,'request_sync') and hasattr(NativeHttp,'close')
 
 
 @unittest.skipUnless(ENABLED,'Explicit monolith loopback stress and native rpc-engine required')
@@ -41,6 +41,7 @@ class NativeTransportStress(unittest.IsolatedAsyncioTestCase):
                 except ConnectionError: pass
                 finally: handlers.discard(task)
         server=await asyncio.start_server(serve,'127.0.0.1',0,limit=65536)
+        client=None
         try:
             client=NativeHttp('http://127.0.0.1:'+str(server.sockets[0].getsockname()[1]),os.stat('/proc/self/ns/net').st_ino,True)
             pending=asyncio.ensure_future(client.request('getSlot','[]'))
@@ -65,7 +66,14 @@ class NativeTransportStress(unittest.IsolatedAsyncioTestCase):
                 except RuntimeError:continue
             else:self.fail('Cancelled HTTP operation did not release its permit')
             await asyncio.wait_for(next_request,3)
+            release.clear();entered.clear()
+            pending=asyncio.ensure_future(client.request('getSlot','[]'))
+            await asyncio.wait_for(entered.wait(),2)
+            client.close()
+            with self.assertRaises(ConnectionError):await asyncio.wait_for(pending,3)
+            with self.assertRaises(ConnectionError):client.request('getSlot','[]')
         finally:
+            if client is not None:client.close()
             release.set();server.close();await server.wait_closed()
             if handlers:await asyncio.wait_for(asyncio.gather(*list(handlers),return_exceptions=True),3)
 
@@ -92,3 +100,17 @@ class NativeTransportStress(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(len(connections),3)
             finally:
                 gate.set()
+
+    async def test_quiet_stream_survives_old_thirty_second_timeout(self):
+        from websockets.asyncio.server import serve
+        async def handler(ws):
+            await ws.recv()
+            await asyncio.sleep(31) # deliberately crosses the former idle deadline
+            await ws.send('quiet-stream-alive')
+        async with serve(handler,'127.0.0.1',0,ping_interval=None,close_timeout=2) as server:
+            endpoint='ws://127.0.0.1:'+str(server.sockets[0].getsockname()[1])
+            ws=await asyncio.wait_for(connect_ws(endpoint,os.stat('/proc/self/ns/net').st_ino,True),3)
+            try:
+                await ws.send(json.dumps({'jsonrpc':'2.0','id':1,'method':'logsSubscribe','params':[]}))
+                self.assertEqual(await asyncio.wait_for(ws.recv(),36),'quiet-stream-alive')
+            finally:await asyncio.wait_for(ws.close(),3)

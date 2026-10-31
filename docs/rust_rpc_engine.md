@@ -122,3 +122,9 @@ reliable cross-language instrumentation is installed. Existing JSON-only capture
 are unsupported rather than re-serialized into binary or used to invent a speedup.
 No authentic binary workload, live transport performance or full Rust pipeline
 speedup has been demonstrated.
+
+
+For the latest sync/runtime, HTTP pool shutdown, WebSocket heartbeat and actual
+socket validation work, see [RPC transport completion](rpc_transport_completion.md).
+That pass supersedes the earlier asyncio.run-per-sync-call and fixed idle timeout
+behavior. It has not been executed by the coding agent.

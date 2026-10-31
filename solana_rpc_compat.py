@@ -5,6 +5,7 @@ backend fallback after evidence errors, native program decoding or native storag
 """
 import asyncio
 import json
+import threading
 from data_policy import SourceAccessBlocked, require_permitted_url
 from onchain_ingest import IndexRpc, READ_METHODS
 from wallet_watch import PublicRpcError
@@ -54,28 +55,72 @@ class RustIndexRpc(IndexRpc):
         super().__init__(endpoint,budget)
         self.endpoint=endpoint
         self._transport=None
+        self._transport_lock=threading.Lock()
+        self._closed=False
+
+    def _transport_for(self,inode):
+        with self._transport_lock:
+            if self._closed: raise RuntimeError('RPC client is closed')
+            if self._transport is None:
+                self._transport=native_module().NativeHttp(self.url,inode,self.endpoint.get('allow_loopback_http',False))
+            return self._transport
+
+    def _parameters(self,method,params):
+        if self._closed: raise RuntimeError('RPC client is closed')
+        if method not in READ_METHODS: raise SourceAccessBlocked('Read-only RPC methods only')
+        if not isinstance(params,list): raise SourceAccessBlocked('RPC params must be an array')
+        try: text=json.dumps(params,allow_nan=False)
+        except (TypeError,ValueError,RecursionError): raise SourceAccessBlocked('Invalid RPC request parameters') from None
+        if len(text.encode())>65536: raise SourceAccessBlocked('RPC request exceeds bound')
+        return text
+
+    def _transport_error(self,error):
+        if isinstance(error,ConnectionError):
+            self.budget.failure(self.url,503)
+            raise error
+        raise SourceAccessBlocked('Malformed native transport evidence; no backend retry') from None
 
     async def call_async(self,method,params):
-        if method not in READ_METHODS: raise SourceAccessBlocked('Read-only RPC methods only')
+        text=self._parameters(method,params)
         inode=check_boundary(self.endpoint)
         await asyncio.to_thread(self.budget.reserve,self.url,self.interval)
-        if self._transport is None:
-            native=native_module()
-            self._transport=native.NativeHttp(self.url,inode,self.endpoint.get('allow_loopback_http',False))
+        transport=self._transport_for(inode)
         self.requests+=1
-        try:
-            status,retry,text=await self._transport.request(method,json.dumps(params,allow_nan=False))
-        except ConnectionError:
-            self.budget.failure(self.url,503)
-            raise
-        except ValueError:
-            raise SourceAccessBlocked('Malformed native transport evidence; no backend retry') from None
+        try: response=await transport.request(method,text)
+        except (ConnectionError,ValueError) as error: self._transport_error(error)
+        return self._finish(*response)
+
+    def call(self,method,params):
+        try: asyncio.get_running_loop()
+        except RuntimeError: pass
+        else: raise RuntimeError('Use await call_async() inside an asyncio loop')
+        text=self._parameters(method,params)
+        inode=check_boundary(self.endpoint)
+        self.budget.reserve(self.url,self.interval)
+        transport=self._transport_for(inode)
+        if not hasattr(transport,'request_sync'): raise RuntimeError('Rebuild native RPC extension with request_sync')
+        self.requests+=1
+        try: response=transport.request_sync(method,text)
+        except (ConnectionError,ValueError) as error: self._transport_error(error)
+        return self._finish(*response)
+
+    def close(self):
+        with self._transport_lock:
+            self._closed=True
+            if self._transport is not None: self._transport.close()
+
+    async def aclose(self): self.close()
+    def __enter__(self): return self
+    def __exit__(self,*_): self.close()
+
+    def _finish(self,status,retry,text):
         if status!=200:
             self.budget.failure(self.url,status,{'Retry-After':retry} if retry else {})
             if status in (401,403): raise SourceAccessBlocked('RPC access denied')
             if status in (500,502,503,504): raise ConnectionError('RPC provider unavailable')
             raise ValueError('RPC HTTP error '+str(status))
-        self.wire_bytes+=len(text.encode()); self.decoded_bytes+=len(text.encode())
+        size=len(text.encode())
+        self.wire_bytes+=size; self.decoded_bytes+=size
         try:
             result=json.loads(text)
             if not isinstance(result,dict) or result.get('jsonrpc')!='2.0' or type(result.get('id')) is not int or result['id']!=1:
@@ -87,7 +132,7 @@ class RustIndexRpc(IndexRpc):
             else:
                 self.budget.success(self.url)
                 return result['result']
-        except (ValueError,TypeError):
+        except (ValueError,TypeError,RecursionError):
             raise SourceAccessBlocked('Malformed RPC evidence; no backend retry') from None
         code=result['error']['code']
         if code in (401,403):
@@ -95,12 +140,6 @@ class RustIndexRpc(IndexRpc):
             raise SourceAccessBlocked('RPC source access denied')
         if code in (429,-32005): self.budget.failure(self.url,429 if code==429 else 503)
         raise PublicRpcError(code)
-
-    def call(self,method,params):
-        try: asyncio.get_running_loop()
-        except RuntimeError: return asyncio.run(self.call_async(method,params))
-        raise RuntimeError('Use await call_async() inside an asyncio loop')
-
     def decode_binary(self,response,*,tx_index,commitment):
         from solana_binary_ingest import ingest_rpc_response
         return ingest_rpc_response(response,source_id=self.source,policy=self.endpoint['policy'],
@@ -124,6 +163,8 @@ def stream_connector(endpoint,python_connector):
     class Connector:
         def __init__(self,url,**_): self.url=url; self.socket=None
         async def __aenter__(self):
+            if self.url!=endpoint.get('ws_url') or endpoint.get('policy',{}).get('stream_verified') is not True:
+                raise SourceAccessBlocked('Explicit authorized WebSocket source required')
             inode=check_boundary(endpoint)
             require_permitted_url(self.url)
             try:
@@ -134,11 +175,12 @@ def stream_connector(endpoint,python_connector):
                     if type(status) is int:
                         from provider_limits import BUDGET
                         BUDGET.failure(self.url,status,{'Retry-After':detail.get('retry_after','')})
+                        if status in (500,502,503,504): raise ConnectionError('WebSocket provider unavailable') from None
                 except (ValueError,TypeError,AttributeError): pass
                 raise SourceAccessBlocked('Native WebSocket handshake denied; review source before retry') from None
             return self
         async def __aexit__(self,*_):
-            if self.socket is not None: await self.socket.close()
+            if self.socket is not None: await asyncio.wait_for(asyncio.shield(self.socket.close()),5)
         async def send(self,text):
             check_boundary(endpoint)
             try: await self.socket.send(text)
