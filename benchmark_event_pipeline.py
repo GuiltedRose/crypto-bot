@@ -42,6 +42,7 @@ def worker(args):
             'batch_median_ns':statistics.median(latencies),'batch_p95_ns':sorted(latencies)[int((len(latencies)-1)*.95)],
             'process_peak_rss_bytes':peak if sys.platform=='darwin' else peak*1024,'allocations':None,
             'events_per_batch':len(result['rows']),'quarantined_transactions':len(result['issues']),
+            'quarantine_rate':len(result['issues'])/len(transactions),
             'scope':'Python context checks/normalization + optional Rust fields + compact projection; schemas compiled each batch'}
 
 
