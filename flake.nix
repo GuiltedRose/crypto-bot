@@ -104,6 +104,7 @@
           python -m unittest discover -s tests -p test_solana_observer.py
           touch $out
         ''; });
+      nixosModules.solana-budget-isolation = import ./nix/solana-network-isolation.nix;
       nixosModules.default = { config, lib, pkgs, ... }:
         import ./nix/module.nix {
           inherit config lib pkgs;

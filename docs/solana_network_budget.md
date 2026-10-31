@@ -52,8 +52,9 @@ that bypasses the namespace. A namespace is not proof of independent execution.
 
 `nix/solana-network-isolation.nix` supplies opt-in systemd restrictions for an
 explicit complete service inventory. It does not start services. By default it
-also denies all IP access. Import it separately into the server configuration;
-it is not silently enabled by the existing flake/module. No namespace, NAT or
+also denies all IP access. The default flake NixOS module imports these options;
+they remain disabled unless explicitly enabled. For standalone use import
+`inputs.crypto-bot.nixosModules.solana-budget-isolation`. No namespace, NAT or
 WAN route is automatically provisioned. An absent namespace must prevent startup.
 
 The nft renderer provides default-drop input/output/forward chains and one shared
@@ -115,3 +116,21 @@ It requires root and iproute2/nftables/ping, creates two isolated local namespac
 with no internet/default route, then tests shared quota and monitor-independent
 lease expiry. Normal test discovery skips it. It does not validate router QoS,
 ISP counters, offloads or whole-service containment.
+
+
+### Missing NixOS option
+
+The default module now includes the isolation option declarations. Hosts importing
+`inputs.crypto-bot.nixosModules.default` must update their pinned crypto-bot input
+to this revision before evaluating the option. Merely pulling the working tree
+or entering `nix develop` does not update the host's pinned module.
+
+For hosts using direct filesystem imports, import
+`/home/link/repos/crypto-bot/nix/solana-network-isolation.nix` into the host's
+NixOS module list (adjust the path if necessary). No repository change can add
+options to a host that imports none of its NixOS modules.
+
+For a flake-managed host, inspect the evaluated configuration explicitly:
+`nix eval /path/to/host-flake#nixosConfigurations.HOST.config.services.solana-budget-isolation.enable`.
+`nixos-option` can use a different legacy configuration than the host flake.
+Keep isolation disabled while verifying option registration; this fix starts no services.

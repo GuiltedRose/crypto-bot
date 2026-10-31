@@ -7,6 +7,7 @@ import argparse
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
+import math
 from pathlib import Path
 import sqlite3
 import uuid
@@ -21,6 +22,21 @@ def timestamp(value):
     parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
     if parsed.tzinfo is None: raise ValueError('Explicit billing-cycle timezone required')
     return parsed.timestamp()
+
+
+def projected_exhaustion(now, cycle_end, remaining, rate):
+    """An in-cycle, representable estimate only; unknown/irrelevant is null."""
+    try:
+        if not all(math.isfinite(value) for value in (now, cycle_end, remaining, rate)):
+            return None
+        if rate <= 0 or remaining < 0 or cycle_end < now:
+            return None
+        projected = now + remaining/rate
+        if not math.isfinite(projected) or projected > cycle_end:
+            return None
+        return datetime.fromtimestamp(projected, timezone.utc).isoformat()
+    except (OverflowError, ValueError, OSError, TypeError):
+        return None
 
 
 class Budget:
@@ -103,7 +119,7 @@ class Budget:
                 'hard_remaining_bytes':max(0,HARD-row[0]), 'safety_margin_bytes':SAFETY_MARGIN,
                 'operational_cutoff_remaining_bytes':max(0,HARD-SAFETY_MARGIN-row[0]), 'reserve_authorized':bool(cycle['reserve_authorized']),
                 'optional_collection_suspended':row[0]>=NORMAL,
-                'projected_exhaustion_utc':datetime.fromtimestamp(now+max(0,HARD-SAFETY_MARGIN-row[0])/rate,timezone.utc).isoformat() if rate else None,
+                'projected_exhaustion_utc':projected_exhaustion(now,cycle['end'],max(0,HARD-SAFETY_MARGIN-row[0]),rate),
                 'cycle_end_utc':datetime.fromtimestamp(cycle['end'],timezone.utc).isoformat(),
                 'isp_wire_budget_guaranteed':False, 'automatic_grants':False}
 

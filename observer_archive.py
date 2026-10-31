@@ -39,7 +39,7 @@ def codec(raw, decompress=False, limit=MAX_FRAME, level=3, timeout=30):
     executable = shutil.which('zstd')
     if executable is None:
         raise RuntimeError('Install zstd or enter nix develop; no codec fallback is used')
-    flags = ['--decompress', '--memory=64MB'] if decompress else ['-'+str(level), '-T1', '--zstd=wlog=23']
+    flags = ['--decompress', '--memory=8MB'] if decompress else ['-'+str(level), '-T1', '--zstd=wlog=23']
     with tempfile.TemporaryFile() as source:
         source.write(raw); source.seek(0)
         proc = subprocess.Popen([executable, '-q', '-c', *flags], stdin=source,

@@ -34,6 +34,7 @@ let
     startLimitBurst = 5;
   };
 in {
+  imports = [ ./solana-network-isolation.nix ];
   options.services.crypto-bot-paper = {
     enable = mkEnableOption "local read-only indexer deployment (no live service)";
     package = mkOption { type = types.package; default = package; };

@@ -2,6 +2,8 @@
 import hashlib
 import time
 
+WINDOW_LOG = 23
+MAX_WINDOW_BYTES = 1 << WINDOW_LOG
 CHUNK = 65536
 MAX_RAW = 64_000_000
 MAX_FRAME = 65_000_000
@@ -41,7 +43,7 @@ def compress_stream(chunks, output, level=3, timeout=30):
             return len(data)
 
     params = zstandard.ZstdCompressionParameters.from_level(
-        level, window_log=23, threads=0, write_checksum=1)
+        level, window_log=WINDOW_LOG, threads=0, write_checksum=1)
     compressor = zstandard.ZstdCompressor(compression_params=params)
     with compressor.stream_writer(Sink(), closefd=False, write_size=CHUNK) as writer:
         for chunk in chunks:

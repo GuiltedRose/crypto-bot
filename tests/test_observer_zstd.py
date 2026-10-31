@@ -3,7 +3,7 @@ import hashlib
 import io
 import unittest
 import zstandard
-from observer_zstd import compress_stream, CHUNK
+from observer_zstd import compress_stream, CHUNK, MAX_WINDOW_BYTES
 
 
 class StreamingTests(unittest.TestCase):
@@ -14,10 +14,24 @@ class StreamingTests(unittest.TestCase):
             for start in range(0,len(raw),CHUNK):
                 yield raw[start:start+CHUNK]
         manifest = compress_stream(chunks(), output)
-        with zstandard.ZstdDecompressor(max_window_size=65536).stream_reader(io.BytesIO(output.getvalue())) as reader:
+        self.assertEqual(MAX_WINDOW_BYTES, 8*1024*1024)
+        self.assertLessEqual(zstandard.get_frame_parameters(output.getvalue()).window_size, MAX_WINDOW_BYTES)
+        with zstandard.ZstdDecompressor(max_window_size=MAX_WINDOW_BYTES).stream_reader(io.BytesIO(output.getvalue())) as reader:
             self.assertEqual(reader.read(), raw)
         self.assertEqual(manifest['raw_sha256'], hashlib.sha256(raw).hexdigest())
         self.assertEqual(manifest['frame_sha256'], hashlib.sha256(output.getvalue()).hexdigest())
+
+    def test_decoder_rejects_window_larger_than_eight_mib(self):
+        output = io.BytesIO()
+        params = zstandard.ZstdCompressionParameters.from_level(3, window_log=24)
+        with zstandard.ZstdCompressor(compression_params=params).stream_writer(output, closefd=False) as writer:
+            writer.write(b'x'*CHUNK)
+            writer.flush(zstandard.FLUSH_BLOCK)
+        frame = output.getvalue()
+        self.assertGreater(zstandard.get_frame_parameters(frame).window_size, MAX_WINDOW_BYTES)
+        with self.assertRaises(zstandard.ZstdError):
+            with zstandard.ZstdDecompressor(max_window_size=MAX_WINDOW_BYTES).stream_reader(io.BytesIO(frame)) as reader:
+                reader.read()
 
     def test_oversized_chunk_stops_before_acceptance(self):
         with self.assertRaises(ValueError):

@@ -4,7 +4,25 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from solana_network_budget import Budget, NORMAL, HARD, SAFETY_MARGIN, firewall, timestamp, sample_os
+from solana_network_budget import Budget, NORMAL, HARD, SAFETY_MARGIN, firewall, timestamp, sample_os, projected_exhaustion
+
+
+class ProjectionTests(unittest.TestCase):
+    def test_zero_tiny_and_nonfinite_rates_return_null(self):
+        for rate in (0, -1, 1e-300, float('nan'), float('inf'), -float('inf')):
+            with self.subTest(rate=rate):
+                self.assertIsNone(projected_exhaustion(100, 200, 1000, rate))
+
+    def test_projection_is_limited_to_billing_cycle(self):
+        self.assertEqual(projected_exhaustion(100, 200, 50, 1), '1970-01-01T00:02:30+00:00')
+        self.assertEqual(projected_exhaustion(100, 200, 100, 1), '1970-01-01T00:03:20+00:00')
+        self.assertIsNone(projected_exhaustion(100, 200, 101, 1))
+
+    def test_nonfinite_inputs_and_unrepresentable_dates_return_null(self):
+        for args in [(float('inf'),200,1,1), (100,float('nan'),1,1),
+                     (100,200,float('inf'),1), (1e20,1e21,0,1)]:
+            with self.subTest(args=args):
+                self.assertIsNone(projected_exhaustion(*args))
 
 
 class BudgetTests(unittest.TestCase):
@@ -19,6 +37,13 @@ class BudgetTests(unittest.TestCase):
         # Model already issued grants without thousands of setup iterations.
         with self.budget.connect() as db:
             db.execute('INSERT INTO grants VALUES(?,?,?,0,0)',('prior',amount,self.now))
+
+    def test_report_no_traffic_and_tiny_traffic_have_no_in_cycle_projection(self):
+        self.assertIsNone(self.budget.report(self.now)['projected_exhaustion_utc'])
+        self.budget.grant(1,self.now)
+        report=self.budget.report(self.now)
+        self.assertIsNone(report['projected_exhaustion_utc'])
+        self.assertEqual(report['budget_debited_bytes'],1)
 
     def test_normal_cutoff_reserve_and_margin(self):
         self.charge(NORMAL)

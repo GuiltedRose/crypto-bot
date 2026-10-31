@@ -124,6 +124,7 @@ Example (replace the slot only after schema/deployment review):
 ```nix
 {
   imports = [ inputs.crypto-bot.nixosModules.default ];
+  services.solana-budget-isolation.enable = false; # options included; no services enabled
   services.crypto-bot-paper = {
     enable = true;
     stateDirectory = "/var/lib/crypto-bot-paper";
