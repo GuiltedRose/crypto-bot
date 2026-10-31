@@ -92,7 +92,7 @@
       });
       devShells = eachSystem (system:
         let inherit (environments.${system}) pkgs python;
-        in { default = pkgs.mkShell { packages = [ python pkgs.sqlite pkgs.tmux pkgs.zstd ]; }; });
+        in { default = pkgs.mkShell { packages = [ python pkgs.sqlite pkgs.tmux pkgs.zstd pkgs.rustc pkgs.cargo pkgs.rustfmt pkgs.clippy ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.nftables pkgs.iproute2 pkgs.iputils pkgs.procps ]; }; });
       checks = eachSystem (system:
         let inherit (environments.${system}) pkgs python;
         in { indexer = pkgs.runCommand "crypto-bot-indexer-tests" { nativeBuildInputs = [ python pkgs.zstd ]; } ''
@@ -105,7 +105,9 @@
           python -m unittest discover -s tests -p test_selfhost_observer.py
           python -m unittest discover -s tests -p test_solana_observer.py
           touch $out
-        ''; });
+        ''; } // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
+          solana-network-lifecycle = import ./tests/nix/solana-network-lifecycle.nix { inherit pkgs; };
+        });
       nixosModules.solana-budget-isolation = import ./nix/solana-network-isolation.nix;
       nixosModules.default = { config, lib, pkgs, ... }:
         import ./nix/module.nix {

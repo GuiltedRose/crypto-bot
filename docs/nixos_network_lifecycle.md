@@ -127,3 +127,50 @@ for household-wide priority and ISP accounting reconciliation.
 - Short sessions intentionally do not provide a sustained node or automatic
   reconnection loop. They allow bounded verification before any larger operating
   decision. Full-node operation remains NO-GO without demonstrated resource fit.
+
+
+## Flake-integrated tools and VM check
+
+From the repository root on the monolith:
+
+```bash
+nix develop
+nix build .#checks.x86_64-linux.solana-network-lifecycle
+```
+
+The check receives `pkgs` from the pinned flake input; it does not import
+`<nixpkgs>`, use another flake, install global packages or use a host configuration.
+Linux shells supply nftables, iproute2, iputils and procps. Other platforms omit
+these Linux-only tools; the VM check is exported only for x86_64-linux. The
+controller's systemd PATH explicitly supplies iproute2 (ip/tc), nftables and procps
+(sysctl); its Python interpreter is an explicit Nix path. NixOS enables nftables
+declaratively when isolation is opted in.
+
+The VM test includes an isolated peer, no default routes, synthetic budget data,
+missing/corrupt-ledger rejection, actual namespace identity, installed quota and
+shapers before traffic, shared ingress/egress accounting, quota exhaustion,
+kernel lease expiry with the controller frozen, workload shutdown, fresh-grant
+restarts and switching to a NixOS specialisation and back without resetting the
+ledger. No validator or internet/mainnet traffic is part of the fixture. This is
+written coverage, not a reported test pass; the operator must execute it.
+
+Inspect declarations with `nix eval .#nixosModules --apply builtins.attrNames`.
+For actual host values and option descriptions, use the host's existing flake:
+
+```bash
+nix eval /path/to/host-flake#nixosConfigurations.HOST.config.services.solana-budget-isolation.enable
+nix eval /path/to/host-flake#nixosConfigurations.HOST.options.services.solana-budget-isolation.sessionBytes.description
+```
+
+A legacy host can use `nixos-option services.solana-budget-isolation.enable` after
+importing the module. Merely entering the development shell does not import host
+options. Import/update the application module in the existing host configuration;
+review a dry activation before enabling. Never initialize a new ledger during a
+rebuild or rollback.
+
+To cut connectivity and stop bound workloads, use
+`sudo systemctl stop solana-budget-network.service`; verify the veth is absent.
+Then disable the declarative option and rebuild if desired. Preserve the external
+ledger and network-events log across both operations. ISP framing, unsolicited
+inbound traffic and host/router administrator bypass remain outside a strict
+application-level guarantee; the 5GB margin and router monitoring still apply.

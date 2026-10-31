@@ -83,3 +83,21 @@ transaction submission and ten-promotion policy remain unchanged.
 Mandatory network constraints and the disabled, unexecuted enforcement components
 are described in [network budget](solana_network_budget.md). The design is not
 approved for independent mainnet operation within the available transfer budget.
+
+
+## Rust components and RAM headroom
+
+The development shell includes Rust tooling. No Rust replacement is implemented
+or benchmarked yet. Existing streaming compression already uses native libzstd
+through CPython; language changes alone do not establish lower peak memory.
+Budget accounting is low-volume SQLite work, not a demonstrated RAM bottleneck.
+
+A justified Rust target would be bounded streaming decode/aggregation that avoids
+materializing full block JSON. Preserve canonical ordering, hashes, quarantine,
+archive compatibility and existing byte limits across any language boundary.
+Use bounded channels and fixed worker counts; never queue unlimited blocks behind
+a slow compressor. Measure peak RSS, codec workspace, disk buffers and throughput
+on the monolith before selecting a replacement or setting process memory limits.
+Leave explicit host headroom; Rust does not remove Solana account-state costs,
+prevent all allocation failures, or replace cgroup memory enforcement. No node,
+benchmark, build or test was run for this tooling change.

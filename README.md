@@ -235,6 +235,24 @@ chat, logs, and issue reports. Live execution can lose funds.
 - [Neural-network review](research/neural_network_review.md): architecture, adaptation, and verification.
 - [Project roadmap](ROADMAP.md): implementation history and remaining work.
 
+## Nix development and isolated deployment checks
+
+`nix develop` supplies Python, Rust (rustc, Cargo, rustfmt, Clippy), and project dependencies. On Linux it also supplies
+nftables, iproute2, ping and process utilities; no global package installation is
+needed. No services start when entering the shell.
+
+Run the isolated NixOS lifecycle test on the monolith:
+
+```bash
+nix build .#checks.x86_64-linux.solana-network-lifecycle
+```
+
+This uses the flake's pinned nixpkgs and local VM fixtures, not Solana mainnet.
+The new VM coverage has not been run by the coding agent. See
+[network deployment and verification](docs/nixos_network_lifecycle.md) for module
+options, opt-in activation, persistent accounting and safe shutdown. Host/router
+controls remain necessary for household priority and ISP-level accounting.
+
 ## Development and support
 
 Run the test suite with:
